@@ -3,6 +3,7 @@ package br.com.gruponeural.core.gateway.security;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
 import org.apache.camel.Exchange;
@@ -45,7 +46,7 @@ public class PublicValidatorProcessor
         try {
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
             LocalDateTime enviado = LocalDateTime.parse(timestampStr, formatter);
-            LocalDateTime agora = LocalDateTime.now();
+            LocalDateTime agora = LocalDateTime.now(ZoneOffset.UTC);
 
             long diff = Math.abs(java.time.Duration.between(agora, enviado).toMinutes());
             if (diff > 5) {
