@@ -161,7 +161,7 @@ public abstract class Route
             .removeHeader("CamelHttpPath")
             .removeHeader("CamelHttpQueryString")
 
-            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&httpClient.connectTimeout=5000&httpClient.responseTimeout=10000")
+            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&httpClient.connectTimeout=5000&httpClient.responseTimeout=60000")
 
             .convertBodyTo(String.class)
 
