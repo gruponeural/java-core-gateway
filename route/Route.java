@@ -19,6 +19,12 @@ public abstract class Route
     @ConfigProperty(name = "gateway.bff.url")
     String gatewayBffUrl;
 
+    @ConfigProperty(name = "gateway.http.connect-timeout", defaultValue = "10000")
+    long gatewayHttpConnectTimeout;
+
+    @ConfigProperty(name = "gateway.http.response-timeout", defaultValue = "60000")
+    long gatewayHttpResponseTimeout;
+
     private String nomeServico;
     private String urlDestino;
     private ArrayList<RoutePath> listaPath = new ArrayList<>();
@@ -161,7 +167,8 @@ public abstract class Route
             .removeHeader("CamelHttpPath")
             .removeHeader("CamelHttpQueryString")
 
-            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&httpClient.connectTimeout=5000&httpClient.responseTimeout=60000")
+            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&connectTimeout="
+                + gatewayHttpConnectTimeout + "&responseTimeout=" + gatewayHttpResponseTimeout)
 
             .convertBodyTo(String.class)
 

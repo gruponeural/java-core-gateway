@@ -19,6 +19,12 @@ public class SessaoGatewayValidator {
     @ConfigProperty(name = "gateway.identity.query-param", defaultValue = "idUsuario")
     String identityQueryParam;
 
+    @ConfigProperty(name = "gateway.sessao-validation.connect-timeout", defaultValue = "10000")
+    int sessaoValidationConnectTimeoutMs;
+
+    @ConfigProperty(name = "gateway.sessao-validation.read-timeout", defaultValue = "60000")
+    int sessaoValidationReadTimeoutMs;
+
     public boolean sessaoAtiva(String idSessao, String identityId) {
         try {
             String url = sessaoUrl.replaceAll("/$", "")
@@ -30,12 +36,12 @@ public class SessaoGatewayValidator {
                 + identityId;
 
             HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(3))
+                .connectTimeout(Duration.ofMillis(sessaoValidationConnectTimeoutMs))
                 .build();
 
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
-                .timeout(Duration.ofSeconds(5))
+                .timeout(Duration.ofMillis(sessaoValidationReadTimeoutMs))
                 .GET()
                 .build();
 
