@@ -111,6 +111,7 @@ public abstract class Route
             .choice()
             .when(constant(path.isPreserveBinaryBody()))
             .log("📝 [BODY ENTRADA]: <conteúdo binário/multipart omitido>")
+            .process(exchange -> MultipartProxySupport.prepararProxyMultipart(exchange))
             .otherwise()
             .setBody(simple("${bodyAs(String)}"))
             .process(exchange -> {
@@ -172,8 +173,15 @@ public abstract class Route
             .removeHeader("CamelHttpPath")
             .removeHeader("CamelHttpQueryString")
 
-            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&connectTimeout="
+            .choice()
+            .when(constant(path.isPreserveBinaryBody()))
+            .process(exchange -> RouteHelper.finalizarHeadersProxyBinario(exchange))
+            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&copyHeaders=false&connectTimeout="
                 + gatewayHttpConnectTimeout + "&responseTimeout=" + gatewayHttpResponseTimeout)
+            .otherwise()
+            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&copyHeaders=true&connectTimeout="
+                + gatewayHttpConnectTimeout + "&responseTimeout=" + gatewayHttpResponseTimeout)
+            .end()
 
             .choice()
             .when(simple("${header.Content-Type} regex '(?i).*(image/|application/octet-stream).*'"))
