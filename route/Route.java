@@ -108,11 +108,16 @@ public abstract class Route
             .log("🧭 [CORRELATION] X-Correlation-ID=${header.X-Correlation-ID} | recebido=${exchangeProperty.corrIdRecebido}")
             .log("📥 [ENTRADA] Método: ${header.CamelHttpMethod} | Path: ${header.CamelHttpPath}")
 
+            .choice()
+            .when(constant(path.isPreserveBinaryBody()))
+            .log("📝 [BODY ENTRADA]: <conteúdo binário/multipart omitido>")
+            .otherwise()
             .setBody(simple("${bodyAs(String)}"))
             .process(exchange -> {
                 exchange.setProperty("safeBody", RouteHelper.mascararDadosSensiveis(exchange.getIn().getBody(String.class)));
             })
             .log("📝 [BODY ENTRADA]: ${exchangeProperty.safeBody}")
+            .end()
 
             .process(exchange -> {
                 String pathFinal = path.getDestino();
@@ -170,15 +175,18 @@ public abstract class Route
             .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&connectTimeout="
                 + gatewayHttpConnectTimeout + "&responseTimeout=" + gatewayHttpResponseTimeout)
 
+            .choice()
+            .when(simple("${header.Content-Type} regex '(?i).*(image/|application/octet-stream).*'"))
+            .log("🔙 [RESPOSTA] Status: ${header.CamelHttpResponseCode} de " + this.nomeServico + " (binário)")
+            .otherwise()
             .convertBodyTo(String.class)
-
             .process(exchange -> {
                 exchange.setProperty("safeResponse", RouteHelper.mascararDadosSensiveis(exchange.getIn().getBody(String.class)));
             })
-
             .log("🔙 [RESPOSTA] Status: ${header.CamelHttpResponseCode} de " + this.nomeServico)
             .log("📦 [BODY RESPOSTA]: ${exchangeProperty.safeResponse}")
             .setHeader("Content-Type", constant("application/json"))
+            .end()
 
             .process(exchange -> org.slf4j.MDC.remove("correlationId"));
     }
