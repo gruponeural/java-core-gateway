@@ -19,7 +19,7 @@ Requer também o submodule **`java-core-geral`** (`core/geral`) para `SessaoCons
 ## Configuração (`application.properties`)
 
 ```properties
-gateway.bff.url=http://localhost:4001/gruponeural/aproveitemais/bff
+gateway.bff.url=http://localhost:5001/gruponeural/aproveitemais/bff
 gateway.identity.header=X-Id-Pessoa
 gateway.identity.query-param=idPessoa
 gateway.health.name=Aproveite Mais - Gateway Health Check
