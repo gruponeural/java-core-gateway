@@ -76,6 +76,39 @@ public class RouteHelper {
         }
     }
 
+    /**
+     * Após {@code bodyAs(String)}, o HTTP client Camel tende a enviar {@code text/plain}.
+     * Converte para {@code byte[]} e força {@code application/json} para o BFF Quarkus aceitar.
+     * Usa {@code copyHeaders=false} no producer — por isso reaplica identity/correlation.
+     */
+    public static void prepararBodyJsonParaProxy(Exchange exchange) {
+        var in = exchange.getIn();
+        String text = in.getBody(String.class);
+        if (text != null) {
+            byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+            in.setBody(bytes);
+            in.setHeader(Exchange.CONTENT_LENGTH, bytes.length);
+            in.removeHeader(Exchange.TRANSFER_ENCODING);
+        }
+        in.setHeader(Exchange.CONTENT_TYPE, "application/json; charset=UTF-8");
+        in.removeHeader("Host");
+        in.removeHeader("Connection");
+        in.removeHeader("Accept-Encoding");
+        in.removeHeader("Content-Encoding");
+
+        String method = in.getHeader(Exchange.HTTP_METHOD, String.class);
+        if (method == null || method.isBlank()) {
+            method = in.getHeader("CamelHttpMethod", String.class);
+        }
+        if (method != null && !method.isBlank()) {
+            in.setHeader(Exchange.HTTP_METHOD, method);
+        }
+
+        copiarHeaderSePresente(in, "X-Correlation-ID");
+        copiarHeaderSePresente(in, "X-Id-Usuario");
+        in.setHeader(Exchange.HTTP_QUERY, in.getHeader(Exchange.HTTP_QUERY, String.class));
+    }
+
     /** Reaplica headers necessários ao BFF quando {@code copyHeaders=false} no proxy HTTP. */
     public static void finalizarHeadersProxyBinario(Exchange exchange) {
         var in = exchange.getIn();

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 
 import org.apache.camel.Exchange;
 import org.apache.camel.builder.RouteBuilder;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import br.com.gruponeural.core.gateway.security.JwtValidatorProcessor;
@@ -179,7 +180,9 @@ public abstract class Route
             .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&copyHeaders=false&connectTimeout="
                 + gatewayHttpConnectTimeout + "&responseTimeout=" + gatewayHttpResponseTimeout)
             .otherwise()
-            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&copyHeaders=true&connectTimeout="
+            // bodyAs(String) faria o HTTP client Camel mandar text/plain → BFF Quarkus responde 415.
+            .process(exchange -> RouteHelper.prepararBodyJsonParaProxy(exchange))
+            .toD("${header.TargetUrl}?bridgeEndpoint=true&throwExceptionOnFailure=false&copyHeaders=false&connectTimeout="
                 + gatewayHttpConnectTimeout + "&responseTimeout=" + gatewayHttpResponseTimeout)
             .end()
 
@@ -209,7 +212,13 @@ public abstract class Route
     }
 
     protected void configurarUrlDestinoBff() {
-        configurarUrlDestino(gatewayBffUrl);
+        // ConfigProvider: @ConfigProperty no RouteBuilder/@ApplicationScoped pode ficar null
+        // no ClientProxy quando o Camel chama addRoutesToCamelContext.
+        String url = gatewayBffUrl;
+        if (url == null || url.isBlank()) {
+            url = ConfigProvider.getConfig().getValue("gateway.bff.url", String.class);
+        }
+        configurarUrlDestino(url);
     }
 
     protected void adicionarRota(RoutePath path) {
