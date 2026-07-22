@@ -157,7 +157,28 @@ public abstract class Route
             .removeHeader("Authorization")
             .end()
 
-            .setHeader("TargetUrl", simple(urlDestino.replaceAll("/$", "") + "/${header.SubPath}"))
+            .process(exchange -> {
+                String base = urlDestino;
+                try {
+                    java.util.Optional<String> fromFile = br.com.gruponeural.core.geral.ops.RotasArquivo.bffUrl();
+                    if (fromFile.isPresent()) {
+                        base = fromFile.get();
+                    }
+                } catch (Throwable ignored) {
+                    /* core/geral sem RotasArquivo em builds antigos */
+                }
+                if (base == null || base.isBlank()) {
+                    base = gatewayBffUrl;
+                }
+                if (base == null || base.isBlank()) {
+                    base = ConfigProvider.getConfig().getValue("gateway.bff.url", String.class);
+                }
+                String sub = exchange.getIn().getHeader("SubPath", String.class);
+                if (sub == null) {
+                    sub = "";
+                }
+                exchange.getIn().setHeader("TargetUrl", base.replaceAll("/$", "") + "/" + sub.replaceAll("^/", ""));
+            })
 
             .process(exchange -> {
                 String q = exchange.getIn().getHeader(Exchange.HTTP_QUERY, String.class);
