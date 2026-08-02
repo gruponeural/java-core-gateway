@@ -20,6 +20,15 @@ public class PublicValidatorProcessor
 
     @Override
     public void process(Exchange exchange) throws Exception {
+        String path = exchange.getIn().getHeader("CamelHttpPath", String.class);
+        if (path == null) {
+            path = exchange.getIn().getHeader(Exchange.HTTP_PATH, String.class);
+        }
+        // GET imagem/obter/{uuid}: bytes públicos (UUID opaco). Clientes de mídia não enviam headers.
+        if (path != null && path.contains("/imagem/obter")) {
+            return;
+        }
+
         String clientSignature = exchange.getIn().getHeader("X-Signature", String.class);
         String clientTimestamp = exchange.getIn().getHeader("X-Timestamp", String.class);
 
