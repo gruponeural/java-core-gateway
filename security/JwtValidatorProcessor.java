@@ -5,6 +5,7 @@ import java.util.Set;
 import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.eclipse.microprofile.jwt.JsonWebToken;
 
 import br.com.gruponeural.core.geral.constant.SessaoConst;
 import io.smallrye.jwt.auth.principal.JWTParser;
@@ -33,7 +34,13 @@ public class JwtValidatorProcessor
         }
 
         String token = authHeader.substring("Bearer ".length());
-        var jwt = jwtParser.parse(token);
+
+        JsonWebToken jwt;
+        try {
+            jwt = jwtParser.parse(token);
+        } catch (Exception e) {
+            throw new SecurityException("Token JWT ausente ou inválido.", e);
+        }
 
         Set<String> groups = jwt.getGroups();
         if (!groups.contains(SessaoConst.SESSAO_USUARIO.getValor())) {
