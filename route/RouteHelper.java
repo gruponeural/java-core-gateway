@@ -4,174 +4,66 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
-import org.apache.camel.Exchange;
-
 import br.com.gruponeural.core.geral.util.JsonUtil;
-import io.vertx.core.buffer.Buffer;
 
 public class RouteHelper {
 
-    public static String mascararDadosSensiveis(String json) {
-        if (json == null || json.isEmpty()) {
-            return json;
-        }
+  private RouteHelper() {
+  }
 
-        try {
-            String regex = "(?i)\"(senha|password|token|secret|tokenAcesso)\"\\s*:\\s*\"[^\"]+\"";
-
-            return json.replaceAll(regex, "\"$1\":\"********\"");
-        } catch (Exception e) {
-            return "[ERRO AO MASCARAR DADOS SENSÍVEIS]";
-        }
+  public static String mascararDadosSensiveis(String json) {
+    if (json == null || json.isEmpty()) {
+      return json;
     }
 
-    /**
-     * Garante body binário (multipart) como {@code byte[]} com Content-Length coerente
-     * antes do proxy HTTP — evita truncamento no BFF ("Connection terminated reading multipart data").
-     */
-    public static void prepararBodyBinarioParaProxy(Exchange exchange) throws IOException {
-        var in = exchange.getIn();
-        byte[] bodyBytes = exchange.getContext().getTypeConverter().convertTo(byte[].class, in.getBody());
+    try {
+      String regex = "(?i)\"(senha|password|token|secret|tokenAcesso)\"\\s*:\\s*\"[^\"]+\"";
 
-        if (bodyBytes == null) {
-            InputStream inputStream = in.getBody(InputStream.class);
-            if (inputStream != null) {
-                bodyBytes = inputStream.readAllBytes();
-            }
-        }
-
-        if (bodyBytes == null) {
-            Buffer buffer = in.getBody(Buffer.class);
-            if (buffer != null) {
-                bodyBytes = buffer.getBytes();
-            }
-        }
-
-        if (bodyBytes == null) {
-            return;
-        }
-
-        in.setBody(bodyBytes);
-        in.setHeader(Exchange.CONTENT_LENGTH, bodyBytes.length);
-        in.removeHeader(Exchange.TRANSFER_ENCODING);
-        in.removeHeader("Host");
-        in.removeHeader("Connection");
-        in.removeHeader("Accept-Encoding");
-        in.removeHeader("Content-Encoding");
-
-        String contentType = in.getHeader(Exchange.CONTENT_TYPE, String.class);
-        if (contentType == null || contentType.isBlank()) {
-            contentType = in.getHeader("Content-Type", String.class);
-        }
-        if (contentType != null && !contentType.isBlank()) {
-            in.setHeader(Exchange.CONTENT_TYPE, contentType);
-        }
-
-        String method = in.getHeader(Exchange.HTTP_METHOD, String.class);
-        if (method == null || method.isBlank()) {
-            method = in.getHeader("CamelHttpMethod", String.class);
-        }
-        if (method != null && !method.isBlank()) {
-            in.setHeader(Exchange.HTTP_METHOD, method);
-        }
+      return json.replaceAll(regex, "\"$1\":\"********\"");
+    } catch (Exception e) {
+      return "[ERRO AO MASCARAR DADOS SENSÍVEIS]";
     }
+  }
 
-    /**
-     * Após {@code bodyAs(String)}, o HTTP client Camel tende a enviar {@code text/plain}.
-     * Converte para {@code byte[]} e força {@code application/json} para o BFF Quarkus aceitar.
-     * Usa {@code copyHeaders=false} no producer — por isso reaplica identity/correlation.
-     */
-    public static void prepararBodyJsonParaProxy(Exchange exchange) {
-        var in = exchange.getIn();
-        String text = in.getBody(String.class);
-        if (text != null) {
-            byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
-            in.setBody(bytes);
-            in.setHeader(Exchange.CONTENT_LENGTH, bytes.length);
-            in.removeHeader(Exchange.TRANSFER_ENCODING);
-        }
-        in.setHeader(Exchange.CONTENT_TYPE, "application/json; charset=UTF-8");
-        in.removeHeader("Host");
-        in.removeHeader("Connection");
-        in.removeHeader("Accept-Encoding");
-        in.removeHeader("Content-Encoding");
+  public static byte[] prepararBodyBinarioParaProxy(byte[] bodyBytes) {
+    return bodyBytes;
+  }
 
-        String method = in.getHeader(Exchange.HTTP_METHOD, String.class);
-        if (method == null || method.isBlank()) {
-            method = in.getHeader("CamelHttpMethod", String.class);
-        }
-        if (method != null && !method.isBlank()) {
-            in.setHeader(Exchange.HTTP_METHOD, method);
-        }
-
-        copiarHeaderSePresente(in, "X-Correlation-ID");
-        copiarHeaderSePresente(in, "X-Id-Usuario");
-        in.setHeader(Exchange.HTTP_QUERY, in.getHeader(Exchange.HTTP_QUERY, String.class));
+  /**
+   * Converte texto para {@code byte[]} e força {@code application/json} para o BFF Quarkus aceitar.
+   */
+  public static byte[] prepararBodyJsonParaProxy(String text) {
+    if (text == null) {
+      return new byte[0];
     }
+    return text.getBytes(StandardCharsets.UTF_8);
+  }
 
-    /** Reaplica headers necessários ao BFF quando {@code copyHeaders=false} no proxy HTTP. */
-    public static void finalizarHeadersProxyBinario(Exchange exchange) {
-        var in = exchange.getIn();
-        byte[] bodyBytes = in.getBody(byte[].class);
-        if (bodyBytes != null) {
-            in.setHeader(Exchange.CONTENT_LENGTH, bodyBytes.length);
-        }
-
-        String contentType = in.getHeader(Exchange.CONTENT_TYPE, String.class);
-        if (contentType == null || contentType.isBlank()) {
-            contentType = in.getHeader("Content-Type", String.class);
-        }
-        if (contentType != null && !contentType.isBlank()) {
-            in.setHeader(Exchange.CONTENT_TYPE, contentType);
-        }
-
-        String method = in.getHeader(Exchange.HTTP_METHOD, String.class);
-        if (method == null || method.isBlank()) {
-            method = in.getHeader("CamelHttpMethod", String.class);
-        }
-        if (method != null && !method.isBlank()) {
-            in.setHeader(Exchange.HTTP_METHOD, method);
-        }
-
-        copiarHeaderSePresente(in, "X-Correlation-ID");
-        copiarHeaderSePresente(in, "X-Id-Usuario");
-        in.setHeader(Exchange.HTTP_QUERY, in.getHeader(Exchange.HTTP_QUERY, String.class));
+  public static String bodyRespostaComoTexto(Object body) throws IOException {
+    if (body == null) {
+      return null;
     }
-
-    private static void copiarHeaderSePresente(org.apache.camel.Message in, String header) {
-        String value = in.getHeader(header, String.class);
-        if (value != null && !value.isBlank()) {
-            in.setHeader(header, value);
-        }
+    if (body instanceof String text) {
+      return text;
     }
-
-    /**
-     * Normaliza o body da resposta do proxy HTTP para texto JSON.
-     * O Camel-Jackson pode deserializar erros do BFF em {@code ExceptionResponse};
-     * {@code convertBodyTo(String.class)} nesse caso usa {@code toString()} e corrompe o JSON.
-     */
-    public static String bodyRespostaComoTexto(Exchange exchange) throws IOException {
-        Object body = exchange.getIn().getBody();
-        if (body == null) {
-            return null;
-        }
-        if (body instanceof String text) {
-            return text;
-        }
-        if (body instanceof byte[] bytes) {
-            return new String(bytes, StandardCharsets.UTF_8);
-        }
-        if (body instanceof Buffer buffer) {
-            return buffer.toString(StandardCharsets.UTF_8);
-        }
-        if (body instanceof InputStream inputStream) {
-            return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-        try {
-            return JsonUtil.getMapper().writeValueAsString(body);
-        } catch (Exception e) {
-            return body.toString();
-        }
+    if (body instanceof byte[] bytes) {
+      return new String(bytes, StandardCharsets.UTF_8);
     }
+    if (body instanceof InputStream inputStream) {
+      return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+    }
+    try {
+      return JsonUtil.getMapper().writeValueAsString(body);
+    } catch (Exception e) {
+      return body.toString();
+    }
+  }
+
+  public static boolean isRespostaBinaria(String contentType) {
+    if (contentType == null || contentType.isBlank()) {
+      return false;
+    }
+    return contentType.matches("(?i).*(image/|application/octet-stream).*");
+  }
 
 }

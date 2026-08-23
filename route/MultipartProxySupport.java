@@ -1,123 +1,102 @@
 package br.com.gruponeural.core.gateway.route;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-import org.apache.camel.Exchange;
-
 /**
- * O consumer {@code platform-http} do Camel decompõe multipart: campos de texto viram headers
- * e o arquivo vira body binário. O BFF espera {@code multipart/form-data} completo — remontamos aqui.
+ * O consumer HTTP decompõe multipart: campos de texto viram headers e o arquivo vira body binário.
+ * O BFF espera {@code multipart/form-data} completo — remontamos aqui quando necessário.
  */
-final class MultipartProxySupport {
+public final class MultipartProxySupport {
 
-    private static final Set<String> CAMPOS_TEXTO = Set.of("descricao", "medidas");
+  private static final Set<String> CAMPOS_TEXTO = Set.of("descricao", "medidas");
 
-    private MultipartProxySupport() {
+  private MultipartProxySupport() {
+  }
+
+  public static byte[] prepararProxyMultipart(byte[] body, String contentType, Map<String, String> headers)
+      throws IOException {
+    if (body == null) {
+      return null;
     }
 
-    static void prepararProxyMultipart(Exchange exchange) throws IOException {
-        var in = exchange.getIn();
-        byte[] body = exchange.getContext().getTypeConverter().convertTo(byte[].class, in.getBody());
-        if (body == null) {
-            return;
-        }
-
-        if (iniciaComMultipart(body)) {
-            in.setBody(body);
-            in.setHeader(Exchange.CONTENT_LENGTH, body.length);
-            limparHeadersInternos(in);
-            return;
-        }
-
-        String descricao = in.getHeader("descricao", String.class);
-        if (descricao == null) {
-            for (String campo : CAMPOS_TEXTO) {
-                String valor = in.getHeader(campo, String.class);
-                if (valor != null && !valor.isBlank()) {
-                    descricao = valor;
-                    break;
-                }
-            }
-        }
-
-        String nomeArquivo = in.getHeader("fileName", String.class);
-        if (nomeArquivo == null || nomeArquivo.isBlank()) {
-            nomeArquivo = in.getHeader("filename", String.class);
-        }
-        if (nomeArquivo == null || nomeArquivo.isBlank()) {
-            nomeArquivo = "imagem.webp";
-        }
-
-        String tipoArquivo = in.getHeader("fileContentType", String.class);
-        if (tipoArquivo == null || tipoArquivo.isBlank()) {
-            tipoArquivo = "application/octet-stream";
-        }
-
-        byte[] multipart = remontarMultipart(descricao, body, nomeArquivo, tipoArquivo);
-        String boundary = extrairBoundary(multipart);
-        in.setBody(multipart);
-        in.setHeader(Exchange.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
-        in.setHeader(Exchange.CONTENT_LENGTH, multipart.length);
-        limparHeadersInternos(in);
+    if (iniciaComMultipart(body)) {
+      return body;
     }
 
-    private static boolean iniciaComMultipart(byte[] body) {
-        if (body.length < 2) {
-            return false;
+    String descricao = headers.get("descricao");
+    if (descricao == null) {
+      for (String campo : CAMPOS_TEXTO) {
+        String valor = headers.get(campo);
+        if (valor != null && !valor.isBlank()) {
+          descricao = valor;
+          break;
         }
-        return body[0] == '-' && body[1] == '-';
+      }
     }
 
-    private static byte[] remontarMultipart(
-        String descricao,
-        byte[] arquivo,
-        String nomeArquivo,
-        String tipoArquivo) throws IOException {
-
-        String boundary = "----Gruponeural" + UUID.randomUUID().toString().replace("-", "");
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-
-        if (descricao != null && !descricao.isBlank()) {
-            out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
-            out.write("Content-Disposition: form-data; name=\"descricao\"\r\n\r\n".getBytes(StandardCharsets.UTF_8));
-            out.write(descricao.getBytes(StandardCharsets.UTF_8));
-            out.write("\r\n".getBytes(StandardCharsets.UTF_8));
-        }
-
-        out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
-        out.write(("Content-Disposition: form-data; name=\"file\"; filename=\"" + nomeArquivo + "\"\r\n")
-            .getBytes(StandardCharsets.UTF_8));
-        out.write(("Content-Type: " + tipoArquivo + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-        out.write(arquivo);
-        out.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
-        return out.toByteArray();
+    String nomeArquivo = headers.get("fileName");
+    if (nomeArquivo == null || nomeArquivo.isBlank()) {
+      nomeArquivo = headers.get("filename");
+    }
+    if (nomeArquivo == null || nomeArquivo.isBlank()) {
+      nomeArquivo = "imagem.webp";
     }
 
-    private static String extrairBoundary(byte[] multipart) {
-        int fim = 0;
-        while (fim < multipart.length && multipart[fim] != '\r' && multipart[fim] != '\n') {
-            fim++;
-        }
-        String primeiraLinha = new String(multipart, 0, fim, StandardCharsets.UTF_8);
-        return primeiraLinha.startsWith("--") ? primeiraLinha.substring(2) : primeiraLinha;
+    String tipoArquivo = headers.get("fileContentType");
+    if (tipoArquivo == null || tipoArquivo.isBlank()) {
+      tipoArquivo = contentType != null && !contentType.isBlank() ? contentType : "application/octet-stream";
     }
 
-    private static void limparHeadersInternos(org.apache.camel.Message in) {
-        in.removeHeader("SubPath");
-        in.removeHeader("TargetUrl");
-        in.removeHeader(Exchange.TRANSFER_ENCODING);
-        in.removeHeader("Host");
-        in.removeHeader("Connection");
-        in.removeHeader("descricao");
-        in.removeHeader("file");
-        in.removeHeader("fileName");
-        in.removeHeader("filename");
-        in.removeHeader("fileContentType");
-        in.removeHeader("medidas");
+    return remontarMultipart(descricao, body, nomeArquivo, tipoArquivo);
+  }
+
+  public static String boundaryFromMultipart(byte[] multipart) {
+    return extrairBoundary(multipart);
+  }
+
+  public static boolean iniciaComMultipart(byte[] body) {
+    if (body.length < 2) {
+      return false;
     }
+    return body[0] == '-' && body[1] == '-';
+  }
+
+  private static byte[] remontarMultipart(
+      String descricao,
+      byte[] arquivo,
+      String nomeArquivo,
+      String tipoArquivo) throws IOException {
+
+    String boundary = "----Gruponeural" + UUID.randomUUID().toString().replace("-", "");
+    java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+
+    if (descricao != null && !descricao.isBlank()) {
+      out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+      out.write("Content-Disposition: form-data; name=\"descricao\"\r\n\r\n".getBytes(StandardCharsets.UTF_8));
+      out.write(descricao.getBytes(StandardCharsets.UTF_8));
+      out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+    }
+
+    out.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+    out.write(("Content-Disposition: form-data; name=\"file\"; filename=\"" + nomeArquivo + "\"\r\n")
+        .getBytes(StandardCharsets.UTF_8));
+    out.write(("Content-Type: " + tipoArquivo + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+    out.write(arquivo);
+    out.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+    return out.toByteArray();
+  }
+
+  private static String extrairBoundary(byte[] multipart) {
+    int fim = 0;
+    while (fim < multipart.length && multipart[fim] != '\r' && multipart[fim] != '\n') {
+      fim++;
+    }
+    String primeiraLinha = new String(multipart, 0, fim, StandardCharsets.UTF_8);
+    return primeiraLinha.startsWith("--") ? primeiraLinha.substring(2) : primeiraLinha;
+  }
 
 }
