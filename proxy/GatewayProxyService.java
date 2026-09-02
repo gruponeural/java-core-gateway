@@ -137,9 +137,14 @@ public class GatewayProxyService {
     LOG.infof("🔙 [RESPOSTA] Status: %d de %s", downstream.statusCode(), route.servico());
     LOG.infof("📦 [BODY RESPOSTA]: %s", safeResponse);
 
+    // Preservar Content-Type do MS (ex.: text/plain em status/logs); JSON só como fallback.
+    String outboundType =
+        responseContentType != null && !responseContentType.isBlank()
+            ? responseContentType
+            : MediaType.APPLICATION_JSON;
     return Response.status(downstream.statusCode())
         .entity(responseText)
-        .type(MediaType.APPLICATION_JSON)
+        .type(outboundType)
         .build();
   }
 
