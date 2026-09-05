@@ -42,10 +42,12 @@ public class PublicSignatureFilter implements ContainerRequestFilter {
     publicValidatorService.validar(
         requestPath,
         requestContext.getHeaderString("X-Signature"),
-        requestContext.getHeaderString("X-Timestamp"));
+        requestContext.getHeaderString("X-Timestamp"),
+        requestContext.getHeaderString("X-GN-Client"));
 
     requestContext.getHeaders().remove("X-Signature");
     requestContext.getHeaders().remove("X-Timestamp");
+    requestContext.getHeaders().remove("X-GN-Client");
   }
 
 }
