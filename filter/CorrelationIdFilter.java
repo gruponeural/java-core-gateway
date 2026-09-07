@@ -69,14 +69,7 @@ public class CorrelationIdFilter implements ContainerRequestFilter, ContainerRes
     }
 
     String normalized = path.startsWith("/") ? path.substring(1) : path;
-    int slash = normalized.indexOf('/');
-    if (slash < 0) {
-      return null;
-    }
-
-    String servico = normalized.substring(0, slash);
-    String pathSuffix = normalized.substring(slash + 1);
-    return registry.match(servico, requestContext.getMethod(), pathSuffix).orElse(null);
+    return registry.matchFullPath(requestContext.getMethod(), normalized).orElse(null);
   }
 
 }

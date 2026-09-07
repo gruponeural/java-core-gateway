@@ -78,13 +78,23 @@ public class GatewayProxyService {
 
     RegisteredRoute route = (RegisteredRoute) requestContext.getProperty(GatewayRouteRegistry.MATCHED_ROUTE_PROPERTY);
     if (route == null) {
-      route = routeRegistry.match(servico, method, pathSuffix).orElse(null);
+      String fullPath = servico + "/" + (pathSuffix == null ? "" : pathSuffix);
+      route = routeRegistry.matchFullPath(method, fullPath).orElse(null);
     }
     if (route == null) {
       return Response.status(Response.Status.NOT_FOUND).build();
     }
 
-    String subPath = route.resolveDestino(pathSuffix);
+    String pathForDestino = pathSuffix;
+    String servicoRegistrado = route.servico();
+    String fullPath = servico + "/" + (pathSuffix == null ? "" : pathSuffix);
+    if (fullPath.equals(servicoRegistrado) || fullPath.startsWith(servicoRegistrado + "/")) {
+      pathForDestino = fullPath.substring(servicoRegistrado.length());
+      if (pathForDestino.startsWith("/")) {
+        pathForDestino = pathForDestino.substring(1);
+      }
+    }
+    String subPath = route.resolveDestino(pathForDestino);
     String base = route.resolveBaseUrl(routeRegistry);
     String targetUrl = base.replaceAll("/$", "") + "/" + subPath.replaceAll("^/", "");
 

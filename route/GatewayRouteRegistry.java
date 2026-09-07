@@ -56,6 +56,46 @@ public class GatewayRouteRegistry {
   }
 
   /**
+   * Localiza rota pelo path completo após a base do gateway (ex.: {@code aproveitemais/pedido/listar}).
+   * Usa o nome de serviço registrado mais longo que for prefixo do path (serviços com {@code /}).
+   */
+  public Optional<RegisteredRoute> matchFullPath(String method, String fullPath) {
+    if (method == null || fullPath == null || fullPath.isBlank()) {
+      return Optional.empty();
+    }
+    String normalized = fullPath.startsWith("/") ? fullPath.substring(1) : fullPath;
+    if (normalized.isBlank()) {
+      return Optional.empty();
+    }
+
+    String bestServico = null;
+    for (RegisteredRoute route : routes) {
+      String servico = route.servico();
+      if (normalized.equals(servico) || normalized.startsWith(servico + "/")) {
+        if (bestServico == null || servico.length() > bestServico.length()) {
+          bestServico = servico;
+        }
+      }
+    }
+    if (bestServico == null) {
+      int slash = normalized.indexOf('/');
+      if (slash < 0) {
+        return Optional.empty();
+      }
+      bestServico = normalized.substring(0, slash);
+    }
+
+    String pathSuffix = normalized.substring(bestServico.length());
+    if (pathSuffix.startsWith("/")) {
+      pathSuffix = pathSuffix.substring(1);
+    }
+    if (pathSuffix.isBlank()) {
+      return Optional.empty();
+    }
+    return match(bestServico, method, pathSuffix);
+  }
+
+  /**
    * Localiza rota por serviço, método HTTP e sufixo após o serviço (ex.: {@code listar}, {@code obter/uuid}).
    */
   public Optional<RegisteredRoute> match(String servico, String method, String pathSuffix) {
