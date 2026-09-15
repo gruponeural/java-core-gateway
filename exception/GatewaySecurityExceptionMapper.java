@@ -19,14 +19,15 @@ public class GatewaySecurityExceptionMapper implements ExceptionMapper<SecurityE
       correlationId = "";
     }
 
+    String detalhe = detalheParaCliente(exception);
     String body = """
         {
             "id": "%s",
             "mensagemTipo": "falha",
             "mensagemTitulo": "Acesso não autorizado.",
-            "mensagemDetalhe": "Assinatura do aplicativo inválida ou expirada."
+            "mensagemDetalhe": "%s"
         }
-        """.formatted(correlationId);
+        """.formatted(correlationId, detalhe);
 
     LOG.warnf(exception, "⚠️ [SECURITY] Tentativa de acesso negada: %s", exception.getMessage());
     LOG.info("🔙 [RESPOSTA] Status: 401");
@@ -36,6 +37,26 @@ public class GatewaySecurityExceptionMapper implements ExceptionMapper<SecurityE
         .type(MediaType.APPLICATION_JSON)
         .entity(body)
         .build();
+  }
+
+  /**
+   * Evita mascarar falha de sessão/JWT como “assinatura inválida”.
+   * Escapa aspas para o JSON embutido no mapper.
+   */
+  private static String detalheParaCliente(SecurityException exception) {
+    String msg = exception.getMessage();
+    if (msg == null || msg.isBlank()) {
+      return "Assinatura do aplicativo inválida ou expirada.";
+    }
+    String lower = msg.toLowerCase();
+    if (lower.contains("assinatura")) {
+      return "Assinatura do aplicativo inválida ou expirada.";
+    }
+    if (lower.contains("sessão") || lower.contains("sessao") || lower.contains("token") || lower.contains("jwt")
+        || lower.contains("não autorizado") || lower.contains("nao autorizado")) {
+      return msg.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+    return "Assinatura do aplicativo inválida ou expirada.";
   }
 
 }

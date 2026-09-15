@@ -36,7 +36,13 @@ public class SessaoGatewayValidator {
     }
 
     boolean ativa = validarRemoto(idSessao, identityId);
-    sessaoGatewayCache.put(idSessao, identityId, ativa);
+    // Não cachear negativo: login faz upsert no mesmo id por dispositivo; um false
+    // stale (ex.: pós-sair) bloquearia o JWT novo por todo o TTL enquanto renovar ainda passa.
+    if (ativa) {
+      sessaoGatewayCache.put(idSessao, identityId, true);
+    } else {
+      sessaoGatewayCache.invalidate(idSessao, identityId);
+    }
     return ativa;
   }
 

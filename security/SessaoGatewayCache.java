@@ -35,6 +35,10 @@ public class SessaoGatewayCache {
     cache.put(key(idSessao, identityId), new CacheEntry(ativa, expiresAt));
   }
 
+  public void invalidate(String idSessao, String identityId) {
+    cache.remove(key(idSessao, identityId));
+  }
+
   private static String key(String idSessao, String identityId) {
     return idSessao + ":" + identityId;
   }
