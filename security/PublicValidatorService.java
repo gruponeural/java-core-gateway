@@ -17,8 +17,23 @@ import jakarta.enterprise.context.ApplicationScoped;
 @ApplicationScoped
 public class PublicValidatorService {
 
+  public static final String CLIENTE_MONITORAMENTO = "monitoramento";
+
   public void validar(String requestPath, String clientSignature, String clientTimestamp, String clientType) {
-    if (requestPath != null && requestPath.contains("/imagem/obter")) {
+    validar(requestPath, clientSignature, clientTimestamp, clientType, null);
+  }
+
+  /**
+   * @param clienteExclusivo cliente único aceito pela rota (ex.: {@code monitoramento}); {@code null} aceita
+   *     {@code site} e {@code mobile}
+   */
+  public void validar(
+      String requestPath,
+      String clientSignature,
+      String clientTimestamp,
+      String clientType,
+      String clienteExclusivo) {
+    if (clienteExclusivo == null && requestPath != null && requestPath.contains("/imagem/obter")) {
       return;
     }
 
@@ -30,6 +45,12 @@ public class PublicValidatorService {
     }
 
     String client = clientType.trim().toLowerCase();
+    if (clienteExclusivo != null && !clienteExclusivo.equals(client)) {
+      throw new SecurityException("X-GN-Client não aceito nesta rota.");
+    }
+    if (clienteExclusivo == null && CLIENTE_MONITORAMENTO.equals(client)) {
+      throw new SecurityException("X-GN-Client não aceito nesta rota.");
+    }
     String secret = secretForClient(client);
 
     validarDriftTempo(clientTimestamp);
@@ -55,6 +76,9 @@ public class PublicValidatorService {
         throw new SecurityException("Secret mobile não configurado (public.validator.secret.mobile).");
       }
       return mobile.get();
+    }
+    if (CLIENTE_MONITORAMENTO.equals(client)) {
+      return required(config, "public.validator.secret.monitoramento");
     }
     throw new SecurityException("X-GN-Client inválido (use site ou mobile).");
   }

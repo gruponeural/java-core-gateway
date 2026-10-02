@@ -43,7 +43,8 @@ public class PublicSignatureFilter implements ContainerRequestFilter {
         requestPath,
         requestContext.getHeaderString("X-Signature"),
         requestContext.getHeaderString("X-Timestamp"),
-        requestContext.getHeaderString("X-GN-Client"));
+        requestContext.getHeaderString("X-GN-Client"),
+        route.path().getClienteExclusivo());
 
     requestContext.getHeaders().remove("X-Signature");
     requestContext.getHeaders().remove("X-Timestamp");

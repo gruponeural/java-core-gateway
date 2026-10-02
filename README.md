@@ -28,3 +28,17 @@ public.validator.secret=...
 ```
 
 Cortex / Central Controle usam `X-Id-Usuario` e `idUsuario` (defaults).
+
+## Assinatura pública (`X-Signature` / `X-Timestamp` / `X-GN-Client`)
+
+| Cliente | Secret | Rotas |
+|---------|--------|-------|
+| `site` | `public.validator.secret` | todas as públicas, menos as de cliente exclusivo |
+| `mobile` | `public.validator.secret.mobile` | idem |
+| `monitoramento` | `public.validator.secret.monitoramento` | só rotas com `somenteCliente("monitoramento")` |
+
+```java
+new RoutePath("monitoramento/stack", "v1/monitoramento/stack", "GET", false).somenteCliente("monitoramento")
+```
+
+O Cortex não usa o cliente `monitoramento` (fica fora do monitoramento dos produtos).
