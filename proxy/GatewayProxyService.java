@@ -50,6 +50,13 @@ public class GatewayProxyService {
       "x-signature",
       "x-timestamp");
 
+  private static final List<String> RESPONSE_HEADERS_REPASSADOS = List.of(
+      HttpHeaders.CACHE_CONTROL,
+      HttpHeaders.ETAG,
+      HttpHeaders.LAST_MODIFIED,
+      HttpHeaders.EXPIRES,
+      "Content-Disposition");
+
   @ConfigProperty(name = "gateway.http.connect-timeout", defaultValue = "10000")
   long gatewayHttpConnectTimeout;
 
@@ -134,9 +141,14 @@ public class GatewayProxyService {
     String responseContentType = downstream.headers().firstValue("Content-Type").orElse(null);
     byte[] responseBody = downstream.body();
 
+    if (downstream.statusCode() == Response.Status.NOT_MODIFIED.getStatusCode()) {
+      LOG.infof("🔙 [RESPOSTA] Status: 304 de %s", route.servico());
+      return repassarHeaders(downstream, Response.notModified()).build();
+    }
+
     if (RouteHelper.isRespostaBinaria(responseContentType)) {
       LOG.infof("🔙 [RESPOSTA] Status: %d de %s (binário)", downstream.statusCode(), route.servico());
-      return Response.status(downstream.statusCode())
+      return repassarHeaders(downstream, Response.status(downstream.statusCode()))
           .entity(responseBody)
           .type(responseContentType != null ? responseContentType : MediaType.APPLICATION_OCTET_STREAM)
           .build();
@@ -152,10 +164,18 @@ public class GatewayProxyService {
         responseContentType != null && !responseContentType.isBlank()
             ? responseContentType
             : MediaType.APPLICATION_JSON;
-    return Response.status(downstream.statusCode())
+    return repassarHeaders(downstream, Response.status(downstream.statusCode()))
         .entity(responseText)
         .type(outboundType)
         .build();
+  }
+
+  private static Response.ResponseBuilder repassarHeaders(
+      HttpResponse<byte[]> downstream, Response.ResponseBuilder builder) {
+    for (String nome : RESPONSE_HEADERS_REPASSADOS) {
+      downstream.headers().firstValue(nome).ifPresent(valor -> builder.header(nome, valor));
+    }
+    return builder;
   }
 
   private byte[] prepararBodyBinario(byte[] body, String contentType, ContainerRequestContext requestContext)
