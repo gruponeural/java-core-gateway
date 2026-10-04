@@ -27,7 +27,7 @@ app.sessao.url=http://localhost:4200/gruponeural/aproveitemais/sessao
 public.validator.secret=...
 ```
 
-Cortex / Central Controle usam `X-Id-Usuario` e `idUsuario` (defaults).
+Genesis / Central Controle usam `X-Id-Usuario` e `idUsuario` (defaults).
 
 ## Assinatura pública (`X-Signature` / `X-Timestamp` / `X-GN-Client`)
 
@@ -41,4 +41,4 @@ Cortex / Central Controle usam `X-Id-Usuario` e `idUsuario` (defaults).
 new RoutePath("monitoramento/stack", "v1/monitoramento/stack", "GET", false).somenteCliente("monitoramento")
 ```
 
-O Cortex não usa o cliente `monitoramento` (fica fora do monitoramento dos produtos).
+O Genesis não usa o cliente `monitoramento` (fica fora do monitoramento dos produtos).
