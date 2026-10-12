@@ -4,6 +4,7 @@ import java.util.Set;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.jboss.logging.Logger;
 
 import br.com.gruponeural.core.geral.constant.SessaoConst;
 import io.smallrye.jwt.auth.principal.JWTParser;
@@ -12,6 +13,8 @@ import jakarta.inject.Inject;
 
 @ApplicationScoped
 public class JwtValidatorService {
+
+  private static final Logger LOG = Logger.getLogger(JwtValidatorService.class);
 
   @ConfigProperty(name = "gateway.identity.header", defaultValue = "X-Id-Usuario")
   String identityHeader;
@@ -73,7 +76,9 @@ public class JwtValidatorService {
         sessaoGatewayCache.invalidate(sid, upn);
       }
     } catch (Exception e) {
-      // Token inválido não tem o que invalidar.
+      // Token ilegível não tem o que invalidar. Só a classe do erro vai para o log:
+      // a mensagem/stack do parser pode conter o token.
+      LOG.warnf("⚠️ [SESSAO] Logout sem invalidar o cache: token não pôde ser lido (%s).", e.getClass().getSimpleName());
     }
   }
 
