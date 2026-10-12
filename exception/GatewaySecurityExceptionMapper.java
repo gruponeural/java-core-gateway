@@ -43,7 +43,12 @@ public class GatewaySecurityExceptionMapper implements ExceptionMapper<SecurityE
    * Evita mascarar falha de sessão/JWT como “assinatura inválida”.
    * Escapa aspas para o JSON embutido no mapper.
    */
+  static final String SESSAO_EXPIRADA = "Sua sessão expirou. Entre de novo para continuar.";
+
   private static String detalheParaCliente(SecurityException exception) {
+    if (exception instanceof br.com.gruponeural.core.gateway.security.SessaoExpiradaException) {
+      return SESSAO_EXPIRADA;
+    }
     String msg = exception.getMessage();
     if (msg == null || msg.isBlank()) {
       return "Assinatura do aplicativo inválida ou expirada.";

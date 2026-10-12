@@ -69,7 +69,7 @@ public class SessaoGatewayValidator {
       HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
       return response.statusCode() == 200 && "true".equalsIgnoreCase(response.body().trim());
     } catch (Exception e) {
-      throw new SecurityException("Não foi possível validar a sessão.", e);
+      throw new SessaoExpiradaException("Não foi possível validar a sessão.", e);
     }
   }
 

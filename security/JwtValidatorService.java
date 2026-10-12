@@ -24,7 +24,7 @@ public class JwtValidatorService {
 
   public String validar(String authHeader) {
     if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-      throw new SecurityException("Token JWT ausente ou inválido.");
+      throw new SessaoExpiradaException("Token JWT ausente ou inválido.");
     }
 
     String token = authHeader.substring("Bearer ".length());
@@ -33,25 +33,25 @@ public class JwtValidatorService {
     try {
       jwt = jwtParser.parse(token);
     } catch (Exception e) {
-      throw new SecurityException("Token JWT ausente ou inválido.", e);
+      throw new SessaoExpiradaException("Token JWT ausente ou inválido.", e);
     }
 
     Set<String> groups = jwt.getGroups();
     if (!groups.contains(SessaoConst.SESSAO_USUARIO.getValor())) {
-      throw new SecurityException("Usuário não autorizado.");
+      throw new SessaoExpiradaException("Usuário não autorizado.");
     }
 
     String identityId = jwt.getClaim("upn");
     if (identityId == null || identityId.isBlank()) {
-      throw new SecurityException("Token JWT ausente ou inválido.");
+      throw new SessaoExpiradaException("Token JWT ausente ou inválido.");
     }
 
     String idSessao = jwt.getClaim("sid");
     if (idSessao == null || idSessao.isBlank()) {
-      throw new SecurityException("Sessão não autorizada.");
+      throw new SessaoExpiradaException("Sessão não autorizada.");
     }
     if (!sessaoGatewayValidator.sessaoAtiva(idSessao, identityId)) {
-      throw new SecurityException("Sessão não autorizada.");
+      throw new SessaoExpiradaException("Sessão não autorizada.");
     }
 
     return identityId;
