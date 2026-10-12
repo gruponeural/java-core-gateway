@@ -20,11 +20,19 @@ public class GatewayJwtAuthFilter implements ContainerRequestFilter {
 
   private static final Logger LOG = Logger.getLogger(GatewayJwtAuthFilter.class);
 
+  private static final String[] HEADERS_IDENTIDADE = { "X-Id-Pessoa", "X-Id-Usuario" };
+
   @Inject
   JwtValidatorService jwtValidatorService;
 
   @Override
   public void filter(ContainerRequestContext requestContext) throws IOException {
+    // Identidade só pode vir do token validado aqui; nunca do cliente.
+    for (String header : HEADERS_IDENTIDADE) {
+      requestContext.getHeaders().remove(header);
+    }
+    requestContext.getHeaders().remove(jwtValidatorService.getIdentityHeader());
+
     RegisteredRoute route = (RegisteredRoute) requestContext.getProperty(GatewayRouteRegistry.MATCHED_ROUTE_PROPERTY);
     if (route == null || !Boolean.TRUE.equals(route.path().getRequerAutenticacao())) {
       return;
@@ -32,9 +40,7 @@ public class GatewayJwtAuthFilter implements ContainerRequestFilter {
 
     LOG.info("🔐 [AUTH] Validando token JWT...");
     String identityId = jwtValidatorService.validar(requestContext.getHeaderString("Authorization"));
-    if (identityId != null && !identityId.isBlank()) {
-      requestContext.getHeaders().putSingle(jwtValidatorService.getIdentityHeader(), identityId);
-    }
+    requestContext.getHeaders().putSingle(jwtValidatorService.getIdentityHeader(), identityId);
     requestContext.getHeaders().remove("Authorization");
   }
 

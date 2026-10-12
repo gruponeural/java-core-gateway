@@ -43,7 +43,7 @@ public class JwtValidatorService {
 
     String identityId = jwt.getClaim("upn");
     if (identityId == null || identityId.isBlank()) {
-      return null;
+      throw new SecurityException("Token JWT ausente ou inválido.");
     }
 
     String idSessao = jwt.getClaim("sid");
