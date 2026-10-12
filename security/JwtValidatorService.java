@@ -47,10 +47,11 @@ public class JwtValidatorService {
     }
 
     String idSessao = jwt.getClaim("sid");
-    if (idSessao != null && !idSessao.isBlank()) {
-      if (!sessaoGatewayValidator.sessaoAtiva(idSessao, identityId)) {
-        throw new SecurityException("Sessão não autorizada.");
-      }
+    if (idSessao == null || idSessao.isBlank()) {
+      throw new SecurityException("Sessão não autorizada.");
+    }
+    if (!sessaoGatewayValidator.sessaoAtiva(idSessao, identityId)) {
+      throw new SecurityException("Sessão não autorizada.");
     }
 
     return identityId;
