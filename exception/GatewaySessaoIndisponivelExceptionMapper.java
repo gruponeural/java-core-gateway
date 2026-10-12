@@ -31,7 +31,9 @@ public class GatewaySessaoIndisponivelExceptionMapper implements ExceptionMapper
         }
         """.formatted(correlationId, TITULO);
 
-    LOG.errorf(exception, "❌ [SESSAO] Serviço de sessão indisponível: %s", exception.getMessage());
+    // Só a classe da causa: a stack e as mensagens podem trazer URL com id de sessão/usuário.
+    Throwable causa = exception.getCause() != null ? exception.getCause() : exception;
+    LOG.errorf("❌ [SESSAO] Serviço de sessão indisponível (%s).", causa.getClass().getSimpleName());
     LOG.info("🔙 [RESPOSTA] Status: 503");
 
     return Response.status(Response.Status.SERVICE_UNAVAILABLE)
