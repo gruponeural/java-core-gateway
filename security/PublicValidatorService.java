@@ -19,8 +19,6 @@ public class PublicValidatorService {
 
   public static final String CLIENTE_MONITORAMENTO = "monitoramento";
   public static final String CLIENTE_GENESIS = "genesis";
-  /** Serviço integracao/aproveitemais: só entra nas rotas internas marcadas com somenteCliente. */
-  public static final String CLIENTE_INTEGRACAO = "integracao";
 
   public void validar(String requestPath, String clientSignature, String clientTimestamp, String clientType) {
     validar(requestPath, clientSignature, clientTimestamp, clientType, null);
@@ -86,16 +84,12 @@ public class PublicValidatorService {
     if (CLIENTE_GENESIS.equals(client)) {
       return required(config, "public.validator.secret.genesis");
     }
-    if (CLIENTE_INTEGRACAO.equals(client)) {
-      return required(config, "public.validator.secret.integracao");
-    }
     throw new SecurityException("X-GN-Client inválido (use site ou mobile).");
   }
 
   /** Cliente de serviço só entra em rota marcada com {@code somenteCliente}. */
   private static boolean clienteDeServico(String client) {
-    return CLIENTE_MONITORAMENTO.equals(client) || CLIENTE_GENESIS.equals(client)
-        || CLIENTE_INTEGRACAO.equals(client);
+    return CLIENTE_MONITORAMENTO.equals(client) || CLIENTE_GENESIS.equals(client);
   }
 
   private static String required(Config config, String key) {
