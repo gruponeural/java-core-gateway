@@ -78,18 +78,33 @@ public class SessaoGatewayValidator {
     return resposta.status() == 200 && "true".equalsIgnoreCase(corpo);
   }
 
-  RespostaSessao chamarSessao(String url) throws IOException, InterruptedException {
-    HttpClient client = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofMillis(sessaoValidationConnectTimeoutMs))
-        .build();
+  private volatile HttpClient httpClient;
 
+  /** HttpClient único (thread-safe), criado na primeira chamada com o connect-timeout configurado. */
+  HttpClient httpClient() {
+    HttpClient atual = httpClient;
+    if (atual == null) {
+      synchronized (this) {
+        atual = httpClient;
+        if (atual == null) {
+          atual = HttpClient.newBuilder()
+              .connectTimeout(Duration.ofMillis(sessaoValidationConnectTimeoutMs))
+              .build();
+          httpClient = atual;
+        }
+      }
+    }
+    return atual;
+  }
+
+  RespostaSessao chamarSessao(String url) throws IOException, InterruptedException {
     HttpRequest request = HttpRequest.newBuilder()
         .uri(URI.create(url))
         .timeout(Duration.ofMillis(sessaoValidationReadTimeoutMs))
         .GET()
         .build();
 
-    HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+    HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
     return new RespostaSessao(response.statusCode(), response.body());
   }
 
