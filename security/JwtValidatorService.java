@@ -57,6 +57,26 @@ public class JwtValidatorService {
     return identityId;
   }
 
+  @Inject
+  SessaoGatewayCache sessaoGatewayCache;
+
+  /** Logout: tira a sessão do cache para o token receber 401 na hora, sem esperar o TTL. */
+  public void invalidarSessaoEmCache(String authHeader) {
+    if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+      return;
+    }
+    try {
+      JsonWebToken jwt = jwtParser.parse(authHeader.substring("Bearer ".length()));
+      String upn = jwt.getClaim("upn");
+      String sid = jwt.getClaim("sid");
+      if (upn != null && sid != null) {
+        sessaoGatewayCache.invalidate(sid, upn);
+      }
+    } catch (Exception e) {
+      // Token inválido não tem o que invalidar.
+    }
+  }
+
   public String getIdentityHeader() {
     return identityHeader;
   }

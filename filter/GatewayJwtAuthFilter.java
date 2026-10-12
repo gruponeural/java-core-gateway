@@ -34,6 +34,9 @@ public class GatewayJwtAuthFilter implements ContainerRequestFilter {
     requestContext.getHeaders().remove(jwtValidatorService.getIdentityHeader());
 
     RegisteredRoute route = (RegisteredRoute) requestContext.getProperty(GatewayRouteRegistry.MATCHED_ROUTE_PROPERTY);
+    if (route != null && route.path().getDestino() != null && route.path().getDestino().endsWith("sessao/sair")) {
+      jwtValidatorService.invalidarSessaoEmCache(requestContext.getHeaderString("Authorization"));
+    }
     if (route == null || !Boolean.TRUE.equals(route.path().getRequerAutenticacao())) {
       return;
     }
