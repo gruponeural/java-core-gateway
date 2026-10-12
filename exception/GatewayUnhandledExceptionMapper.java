@@ -20,6 +20,9 @@ public class GatewayUnhandledExceptionMapper implements ExceptionMapper<Exceptio
     if (exception instanceof WebApplicationException webApplicationException) {
       return webApplicationException.getResponse();
     }
+    if (exception instanceof br.com.gruponeural.core.gateway.security.SessaoIndisponivelException indisponivel) {
+      return new GatewaySessaoIndisponivelExceptionMapper().toResponse(indisponivel);
+    }
     if (exception instanceof SecurityException securityException) {
       return new GatewaySecurityExceptionMapper().toResponse(securityException);
     }
