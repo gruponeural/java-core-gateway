@@ -1,0 +1,278 @@
+package br.com.gruponeural.core.gateway.filter;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Locale;
+import java.util.Set;
+import java.util.UUID;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
+import org.jboss.logging.Logger;
+
+import io.vertx.core.http.HttpServerRequest;
+import jakarta.annotation.Priority;
+import jakarta.ws.rs.Priorities;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.ext.Provider;
+
+/**
+ * Rate limit em memória por IP e por rota, só nas rotas de autenticação e escrita sensível
+ * ({@link #REGRAS}). Nenhuma outra rota passa pelo contador.
+ * <p>
+ * Chave: renovar por {@code idSessao} do corpo (UUID; sem ele, por IP); entrar e recuperação de senha
+ * por IP e também por conta (CPF/e-mail do corpo, em hash); cadastro só por IP.
+ * <p>
+ * Properties: {@code gateway.rate-limit.<regra>.limite} (tentativas por janela e por rota),
+ * {@code gateway.rate-limit.<regra>.limite-conta} (entrar e recuperação),
+ * {@code gateway.rate-limit.janela-segundos} (default 60, também é o {@code expireAfterWrite}),
+ * {@code gateway.rate-limit.max-entradas} (default 10000, {@code maximumSize}) e
+ * {@code gateway.proxies-confiaveis} (IPs/CIDRs; sem default). O IP vem de {@link #resolveClientKey}.
+ */
+@Provider
+@Priority(Priorities.AUTHENTICATION - 10)
+public class RateLimitFilter implements ContainerRequestFilter {
+
+  private static final Logger LOG = Logger.getLogger(RateLimitFilter.class);
+
+  enum TipoChave { IP, SESSAO, IP_E_CONTA }
+
+  record Regra(String nome, Set<String> paths, int limitePadrao, TipoChave tipo, String campoConta,
+      int limiteContaPadrao) {
+    String propriedade() {
+      return "gateway.rate-limit." + nome + ".limite";
+    }
+
+    String propriedadeConta() {
+      return "gateway.rate-limit." + nome + ".limite-conta";
+    }
+  }
+
+  static final List<Regra> REGRAS = List.of(
+      new Regra("sessao-entrar", Set.of("sessao/entrar"), 20, TipoChave.IP_E_CONTA, "cpf", 5),
+      new Regra("sessao-renovar", Set.of("sessao/renovar"), 30, TipoChave.SESSAO, null, 0),
+      new Regra("cadastro", Set.of("pessoa/cadastrar", "pessoa/cadastrar-provedor"), 10, TipoChave.IP, null, 0),
+      new Regra("recuperacao-senha",
+          Set.of("pessoa/recuperar-senha", "pessoa/reenviar-token-senha", "pessoa/redefinir-senha"), 5,
+          TipoChave.IP_E_CONTA, "email", 3));
+
+  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final int MAX_CORPO_LIDO = 16 * 1024;
+
+  @Context
+  HttpServerRequest httpServerRequest;
+
+  private volatile Estado estado;
+
+  private record Estado(RateLimitContador contador, ProxiesConfiaveis proxies, Map<String, Integer> limites, Map<String, Integer> limitesConta,
+      long janelaSegundos) {
+  }
+
+  @Override
+  public void filter(ContainerRequestContext requestContext) throws IOException {
+    String path = normalizar(requestContext.getUriInfo().getPath());
+    Optional<Regra> regra = regraPara(requestContext.getMethod(), path);
+    if (regra.isEmpty()) {
+      return;
+    }
+    Estado e = estado();
+    String remoto = httpServerRequest != null && httpServerRequest.remoteAddress() != null
+        ? httpServerRequest.remoteAddress().hostAddress()
+        : null;
+    String clientKey = resolveClientKey(requestContext.getHeaderString("X-Forwarded-For"), remoto, e.proxies());
+    Regra r = regra.get();
+    byte[] corpo = r.tipo() == TipoChave.IP ? null : lerCorpo(requestContext);
+
+    boolean permitido;
+    if (r.tipo() == TipoChave.SESSAO) {
+      String chave = idSessao(corpo).map(id -> "sid:" + id).orElse("ip:" + clientKey);
+      permitido = e.contador().permitir(path + "|" + chave, e.limites().get(r.nome()));
+    } else {
+      permitido = e.contador().permitir(path + "|ip:" + clientKey, e.limites().get(r.nome()));
+      if (permitido && r.tipo() == TipoChave.IP_E_CONTA) {
+        Optional<String> conta = chaveConta(r, corpo);
+        if (conta.isPresent()) {
+          permitido = e.contador().permitir(path + "|" + conta.get(), e.limitesConta().get(r.nome()));
+        }
+      }
+    }
+    if (!permitido) {
+      // Nunca loga IP, conta ou sessão em claro.
+      LOG.warnf("Rate limit %s excedido em %s (cliente %s)", r.nome(), path, RateLimitContador.hashParaLog(clientKey));
+      String correlationId = org.slf4j.MDC.get("correlationId");
+      requestContext.abortWith(resposta429(correlationId, e.janelaSegundos()));
+    }
+  }
+
+  private static byte[] lerCorpo(ContainerRequestContext ctx) throws IOException {
+    if (!ctx.hasEntity()) {
+      return null;
+    }
+    byte[] corpo;
+    try (InputStream in = ctx.getEntityStream()) {
+      corpo = in.readAllBytes();
+    }
+    ctx.setEntityStream(new ByteArrayInputStream(corpo));
+    return corpo;
+  }
+
+  private static Optional<JsonNode> json(byte[] corpo) {
+    if (corpo == null || corpo.length == 0 || corpo.length > MAX_CORPO_LIDO) {
+      return Optional.empty();
+    }
+    try {
+      JsonNode n = JSON.readTree(corpo);
+      return n != null && n.isObject() ? Optional.of(n) : Optional.empty();
+    } catch (IOException ex) {
+      return Optional.empty();
+    }
+  }
+
+  /** {@code idSessao} do corpo do renovar, validado como UUID. */
+  static Optional<String> idSessao(byte[] corpo) {
+    return json(corpo).map(n -> n.path("idSessao").asText(null)).flatMap(v -> {
+      try {
+        return Optional.of(UUID.fromString(v.trim()).toString());
+      } catch (RuntimeException ex) {
+        return Optional.empty();
+      }
+    });
+  }
+
+  /** Chave da conta (CPF só dígitos ou e-mail minúsculo), sempre em hash SHA-256. */
+  static Optional<String> chaveConta(Regra regra, byte[] corpo) {
+    if (regra.tipo() != TipoChave.IP_E_CONTA || regra.campoConta() == null) {
+      return Optional.empty();
+    }
+    return json(corpo).map(n -> n.path(regra.campoConta()).asText(null)).map(v -> {
+      String t = v.trim();
+      return "cpf".equals(regra.campoConta()) ? t.replaceAll("\\D", "") : t.toLowerCase(Locale.ROOT);
+    }).filter(v -> !v.isEmpty()).map(v -> "conta:" + sha256(regra.campoConta() + ":" + v));
+  }
+
+  private static String sha256(String v) {
+    try {
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(v.getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException(ex);
+    }
+  }
+
+  static Optional<Regra> regraPara(String metodo, String path) {
+    if (path == null || !"POST".equalsIgnoreCase(metodo)) {
+      return Optional.empty();
+    }
+    String p = normalizar(path);
+    return REGRAS.stream().filter(r -> r.paths().contains(p)).findFirst();
+  }
+
+  private static String normalizar(String path) {
+    if (path == null) {
+      return null;
+    }
+    String p = path;
+    while (p.startsWith("/")) {
+      p = p.substring(1);
+    }
+    while (p.endsWith("/")) {
+      p = p.substring(0, p.length() - 1);
+    }
+    return p;
+  }
+
+  static Response resposta429(String correlationId) {
+    return resposta429(correlationId, 60);
+  }
+
+  static Response resposta429(String correlationId, long retryAfterSegundos) {
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("id", correlationId == null ? "" : correlationId);
+    body.put("mensagemTipo", "AVISO");
+    body.put("mensagemTitulo", "Muitas tentativas.");
+    body.put("mensagemDetalhe", "Você fez muitas tentativas. Aguarde alguns minutos e tente novamente.");
+    return Response.status(429)
+        .type(MediaType.APPLICATION_JSON_TYPE)
+        .header("Retry-After", String.valueOf(retryAfterSegundos))
+        .entity(body)
+        .build();
+  }
+
+  private Estado estado() {
+    Estado e = estado;
+    if (e == null) {
+      synchronized (this) {
+        e = estado;
+        if (e == null) {
+          Config config = ConfigProvider.getConfig();
+          long janela = config.getOptionalValue("gateway.rate-limit.janela-segundos", Long.class).orElse(60L);
+          long max = config.getOptionalValue("gateway.rate-limit.max-entradas", Long.class).orElse(10_000L);
+          Map<String, Integer> limites = new LinkedHashMap<>();
+          for (Regra r : REGRAS) {
+            limites.put(r.nome(), config.getOptionalValue(r.propriedade(), Integer.class).orElse(r.limitePadrao()));
+          }
+          ProxiesConfiaveis proxies = ProxiesConfiaveis.of(
+              config.getOptionalValues("gateway.proxies-confiaveis", String.class).orElse(List.of()));
+          Map<String, Integer> limitesConta = new LinkedHashMap<>();
+          for (Regra r : REGRAS) {
+            if (r.tipo() == TipoChave.IP_E_CONTA) {
+              limitesConta.put(r.nome(),
+                  config.getOptionalValue(r.propriedadeConta(), Integer.class).orElse(r.limiteContaPadrao()));
+            }
+          }
+          e = new Estado(new RateLimitContador(max, Duration.ofSeconds(janela)), proxies, Map.copyOf(limites),
+              Map.copyOf(limitesConta), janela);
+          estado = e;
+        }
+      }
+    }
+    return e;
+  }
+
+  /**
+   * Chave do cliente. Se o IP remoto for um proxy confiável, percorre o X-Forwarded-For da direita
+   * para a esquerda e para no primeiro IP que não é proxy confiável. Se o remoto não for confiável
+   * (ou a lista estiver vazia), ignora o header e usa o IP remoto.
+   */
+  static String resolveClientKey(String forwarded, String remoto, ProxiesConfiaveis proxies) {
+    String atual = ProxiesConfiaveis.normalizarIp(remoto);
+    if (atual == null) {
+      return "unknown";
+    }
+    if (forwarded == null || proxies == null || proxies.isVazia() || !proxies.contem(atual)) {
+      return atual;
+    }
+    String[] partes = forwarded.split(",");
+    for (int i = partes.length - 1; i >= 0; i--) {
+      String parte = partes[i].trim();
+      if (parte.isEmpty()) {
+        continue;
+      }
+      String ip = ProxiesConfiaveis.normalizarIp(parte);
+      if (ip == null) {
+        return atual;
+      }
+      atual = ip;
+      if (!proxies.contem(ip)) {
+        return ip;
+      }
+    }
+    return atual;
+  }
+}
