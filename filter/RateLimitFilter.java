@@ -44,8 +44,8 @@ import jakarta.ws.rs.ext.Provider;
  * {@code gateway.rate-limit.<regra>.limite-conta} (entrar e recuperação),
  * {@code gateway.rate-limit.janela-segundos} (default 60, também é o {@code expireAfterWrite}),
  * {@code gateway.rate-limit.max-entradas} (default 10000, {@code maximumSize}) e
- * {@code gateway.proxies-confiaveis} (IPs/CIDRs; default: faixas privadas 10.0.0.0/8, 172.16.0.0/12 e
- * 192.168.0.0/16), {@code gateway.proxies-confiaveis.cabecalho} (default X-Forwarded-For) e
+ * {@code gateway.proxies-confiaveis} (IPs/CIDRs ou {@code nenhum}; default: nenhum proxy confiável,
+ * sempre o IP remoto), {@code gateway.proxies-confiaveis.cabecalho} (default X-Forwarded-For) e
  * {@code gateway.rate-limit.sessao-renovar.limite-ip} (default 30). O IP vem de {@link #resolveClientKey}.
  */
 @Provider
@@ -85,10 +85,30 @@ public class RateLimitFilter implements ContainerRequestFilter {
   static final String PROP_PROXIES = "gateway.proxies-confiaveis";
   static final String PROP_CABECALHO = "gateway.proxies-confiaveis.cabecalho";
   static final String CABECALHO_PADRAO = "X-Forwarded-For";
-  static final List<String> PROXIES_PADRAO = List.of("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16");
+  /** Valor explícito que desliga a confiança em proxies (sem diferença de maiúsculas, ignora espaços). */
+  static final String PROXIES_NENHUM = "nenhum";
 
+  /**
+   * Sem configuração ou com {@code nenhum}: lista vazia (o cabeçalho é ignorado e vale o IP remoto).
+   * Não há padrão de faixas privadas. {@code nenhum} junto com IP/CIDR é erro de configuração.
+   */
   static ProxiesConfiaveis proxiesConfiaveis(Optional<List<String>> configurado) {
-    return ProxiesConfiaveis.of(configurado.orElse(PROXIES_PADRAO));
+    List<String> valores = configurado.orElse(List.of());
+    boolean temNenhum = valores.stream().anyMatch(v -> v != null && PROXIES_NENHUM.equalsIgnoreCase(v.trim()));
+    if (temNenhum) {
+      boolean temOutro = valores.stream()
+          .anyMatch(v -> v != null && !v.trim().isEmpty() && !PROXIES_NENHUM.equalsIgnoreCase(v.trim()));
+      if (temOutro) {
+        throw new IllegalArgumentException(PROP_PROXIES + ": \"nenhum\" não pode vir junto com IP/CIDR");
+      }
+      return ProxiesConfiaveis.of(List.of());
+    }
+    return ProxiesConfiaveis.of(valores);
+  }
+
+  /** Validação na subida (ver {@link ProxiesConfiaveisStartup}): configuração inválida impede o boot. */
+  static void validarProxiesNaSubida(Optional<List<String>> configurado) {
+    proxiesConfiaveis(configurado);
   }
 
   static String nomeCabecalho(Optional<String> configurado) {
