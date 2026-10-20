@@ -24,12 +24,16 @@ public class CorrelationIdFilter implements ContainerRequestFilter, ContainerRes
   public static final String CORRELATION_HEADER = "X-Correlation-ID";
   public static final String CORRELATION_RECEIVED_PROPERTY = "gateway.corrIdRecebido";
 
+  private static final java.util.regex.Pattern CORRELATION_ID_VALIDO =
+      java.util.regex.Pattern.compile("^[A-Za-z0-9-]{1,64}$");
+
   private static final Logger LOG = Logger.getLogger(CorrelationIdFilter.class);
 
   @Override
   public void filter(ContainerRequestContext requestContext) throws IOException {
     String corrId = requestContext.getHeaderString(CORRELATION_HEADER);
-    boolean corrIdRecebido = corrId != null && !corrId.isBlank();
+    // Só aceita o id do cliente se for seguro para o log; senão descarta e gera um novo.
+    boolean corrIdRecebido = corrId != null && CORRELATION_ID_VALIDO.matcher(corrId).matches();
     if (!corrIdRecebido) {
       corrId = UUID.randomUUID().toString().substring(0, 8);
     }
