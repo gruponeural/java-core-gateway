@@ -37,14 +37,16 @@ import jakarta.ws.rs.ext.Provider;
  * Rate limit em memória por IP e por rota, só nas rotas de autenticação e escrita sensível
  * ({@link #REGRAS}). Nenhuma outra rota passa pelo contador.
  * <p>
- * Chave: renovar por {@code idSessao} do corpo (UUID; sem ele, por IP); entrar e recuperação de senha
+ * Chave: renovar por IP e também por {@code idSessao} do corpo (UUID); entrar-provedor só por IP; entrar e recuperação de senha
  * por IP e também por conta (CPF/e-mail do corpo, em hash); cadastro só por IP.
  * <p>
  * Properties: {@code gateway.rate-limit.<regra>.limite} (tentativas por janela e por rota),
  * {@code gateway.rate-limit.<regra>.limite-conta} (entrar e recuperação),
  * {@code gateway.rate-limit.janela-segundos} (default 60, também é o {@code expireAfterWrite}),
  * {@code gateway.rate-limit.max-entradas} (default 10000, {@code maximumSize}) e
- * {@code gateway.proxies-confiaveis} (IPs/CIDRs; sem default). O IP vem de {@link #resolveClientKey}.
+ * {@code gateway.proxies-confiaveis} (IPs/CIDRs; default: faixas privadas 10.0.0.0/8, 172.16.0.0/12 e
+ * 192.168.0.0/16), {@code gateway.proxies-confiaveis.cabecalho} (default X-Forwarded-For) e
+ * {@code gateway.rate-limit.sessao-renovar.limite-ip} (default 30). O IP vem de {@link #resolveClientKey}.
  */
 @Provider
 @Priority(Priorities.AUTHENTICATION - 10)
@@ -60,6 +62,10 @@ public class RateLimitFilter implements ContainerRequestFilter {
       return "gateway.rate-limit." + nome + ".limite";
     }
 
+    String propriedadeIp() {
+      return "gateway.rate-limit." + nome + ".limite-ip";
+    }
+
     String propriedadeConta() {
       return "gateway.rate-limit." + nome + ".limite-conta";
     }
@@ -67,11 +73,27 @@ public class RateLimitFilter implements ContainerRequestFilter {
 
   static final List<Regra> REGRAS = List.of(
       new Regra("sessao-entrar", Set.of("sessao/entrar"), 20, TipoChave.IP_E_CONTA, "cpf", 5),
+      new Regra("sessao-entrar-provedor", Set.of("sessao/entrar-provedor"), 20, TipoChave.IP, null, 0),
       new Regra("sessao-renovar", Set.of("sessao/renovar"), 30, TipoChave.SESSAO, null, 0),
       new Regra("cadastro", Set.of("pessoa/cadastrar", "pessoa/cadastrar-provedor"), 10, TipoChave.IP, null, 0),
       new Regra("recuperacao-senha",
           Set.of("pessoa/recuperar-senha", "pessoa/reenviar-token-senha", "pessoa/redefinir-senha"), 5,
           TipoChave.IP_E_CONTA, "email", 3));
+
+  /** Limite por IP do renovar, além do limite por idSessao. */
+  static final int LIMITE_IP_RENOVAR_PADRAO = 30;
+  static final String PROP_PROXIES = "gateway.proxies-confiaveis";
+  static final String PROP_CABECALHO = "gateway.proxies-confiaveis.cabecalho";
+  static final String CABECALHO_PADRAO = "X-Forwarded-For";
+  static final List<String> PROXIES_PADRAO = List.of("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16");
+
+  static ProxiesConfiaveis proxiesConfiaveis(Optional<List<String>> configurado) {
+    return ProxiesConfiaveis.of(configurado.orElse(PROXIES_PADRAO));
+  }
+
+  static String nomeCabecalho(Optional<String> configurado) {
+    return configurado.map(String::trim).filter(v -> !v.isEmpty()).orElse(CABECALHO_PADRAO);
+  }
 
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final int MAX_CORPO_LIDO = 16 * 1024;
@@ -82,7 +104,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
   private volatile Estado estado;
 
   private record Estado(RateLimitContador contador, ProxiesConfiaveis proxies, Map<String, Integer> limites, Map<String, Integer> limitesConta,
-      long janelaSegundos) {
+      long janelaSegundos, String cabecalho, int limiteIpRenovar) {
   }
 
   @Override
@@ -96,14 +118,17 @@ public class RateLimitFilter implements ContainerRequestFilter {
     String remoto = httpServerRequest != null && httpServerRequest.remoteAddress() != null
         ? httpServerRequest.remoteAddress().hostAddress()
         : null;
-    String clientKey = resolveClientKey(requestContext.getHeaderString("X-Forwarded-For"), remoto, e.proxies());
+    String clientKey = resolveClientKey(requestContext.getHeaderString(e.cabecalho()), remoto, e.proxies());
     Regra r = regra.get();
     byte[] corpo = r.tipo() == TipoChave.IP ? null : lerCorpo(requestContext);
 
     boolean permitido;
     if (r.tipo() == TipoChave.SESSAO) {
-      String chave = idSessao(corpo).map(id -> "sid:" + id).orElse("ip:" + clientKey);
-      permitido = e.contador().permitir(path + "|" + chave, e.limites().get(r.nome()));
+      permitido = e.contador().permitir(path + "|ip:" + clientKey, e.limiteIpRenovar());
+      Optional<String> sid = idSessao(corpo);
+      if (permitido && sid.isPresent()) {
+        permitido = e.contador().permitir(path + "|sid:" + sid.get(), e.limites().get(r.nome()));
+      }
     } else {
       permitido = e.contador().permitir(path + "|ip:" + clientKey, e.limites().get(r.nome()));
       if (permitido && r.tipo() == TipoChave.IP_E_CONTA) {
@@ -202,11 +227,15 @@ public class RateLimitFilter implements ContainerRequestFilter {
   }
 
   static Response resposta429(String correlationId, long retryAfterSegundos) {
+    // Formato de erro padrão. O correlationId segue no header da resposta pelo CorrelationIdFilter.
+    Map<String, Object> mensagem = new LinkedHashMap<>();
+    mensagem.put("tipo", "AVISO");
+    mensagem.put("titulo", "Muitas tentativas");
+    mensagem.put("detalhe", "Você fez muitas tentativas. Aguarde alguns minutos e tente novamente.");
     Map<String, Object> body = new LinkedHashMap<>();
-    body.put("id", correlationId == null ? "" : correlationId);
-    body.put("mensagemTipo", "AVISO");
-    body.put("mensagemTitulo", "Muitas tentativas.");
-    body.put("mensagemDetalhe", "Você fez muitas tentativas. Aguarde alguns minutos e tente novamente.");
+    body.put("tipo", "MENSAGEM");
+    body.put("mensagem", mensagem);
+    body.put("listaViolacao", List.of());
     return Response.status(429)
         .type(MediaType.APPLICATION_JSON_TYPE)
         .header("Retry-After", String.valueOf(retryAfterSegundos))
@@ -227,8 +256,10 @@ public class RateLimitFilter implements ContainerRequestFilter {
           for (Regra r : REGRAS) {
             limites.put(r.nome(), config.getOptionalValue(r.propriedade(), Integer.class).orElse(r.limitePadrao()));
           }
-          ProxiesConfiaveis proxies = ProxiesConfiaveis.of(
-              config.getOptionalValues("gateway.proxies-confiaveis", String.class).orElse(List.of()));
+          ProxiesConfiaveis proxies = proxiesConfiaveis(config.getOptionalValues(PROP_PROXIES, String.class));
+          String cabecalho = nomeCabecalho(config.getOptionalValue(PROP_CABECALHO, String.class));
+          int limiteIpRenovar = config.getOptionalValue("gateway.rate-limit.sessao-renovar.limite-ip", Integer.class)
+              .orElse(LIMITE_IP_RENOVAR_PADRAO);
           Map<String, Integer> limitesConta = new LinkedHashMap<>();
           for (Regra r : REGRAS) {
             if (r.tipo() == TipoChave.IP_E_CONTA) {
@@ -237,7 +268,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
             }
           }
           e = new Estado(new RateLimitContador(max, Duration.ofSeconds(janela)), proxies, Map.copyOf(limites),
-              Map.copyOf(limitesConta), janela);
+              Map.copyOf(limitesConta), janela, cabecalho, limiteIpRenovar);
           estado = e;
         }
       }
@@ -246,9 +277,10 @@ public class RateLimitFilter implements ContainerRequestFilter {
   }
 
   /**
-   * Chave do cliente. Se o IP remoto for um proxy confiável, percorre o X-Forwarded-For da direita
+   * Chave do cliente. Se o IP remoto for um proxy confiável, percorre o cabeçalho configurado da direita
    * para a esquerda e para no primeiro IP que não é proxy confiável. Se o remoto não for confiável
-   * (ou a lista estiver vazia), ignora o header e usa o IP remoto.
+   * (ou a lista estiver vazia), ignora o header e usa o IP remoto. Um valor que não é IP encerra a
+   * leitura e vale o último IP válido lido; o valor cru nunca vira chave.
    */
   static String resolveClientKey(String forwarded, String remoto, ProxiesConfiaveis proxies) {
     String atual = ProxiesConfiaveis.normalizarIp(remoto);
