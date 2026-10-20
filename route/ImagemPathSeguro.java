@@ -22,6 +22,9 @@ public final class ImagemPathSeguro {
 
   public static final String ORIGEM_OBTER = "obter";
   private static final Pattern SEGMENTO = Pattern.compile("^[A-Za-z0-9._-]+$");
+  /** Id da imagem: UUID canônico 8-4-4-4-12 em hexadecimal. */
+  private static final Pattern UUID_CANONICO =
+      Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
   private static final Pattern DESTINO_IMAGEM_OBTER = Pattern.compile("(^|.*/)imagem/obter/?$");
 
   /** Recursos de imagem expostos no gateway, com e sem o domínio como prefixo (ex.: no CC). */
@@ -55,8 +58,13 @@ public final class ImagemPathSeguro {
         && !"..".equals(segmento);
   }
 
+  /** Id aceito na rota: segmento válido e UUID canônico (8-4-4-4-12 hex). */
+  public static boolean idValido(String id) {
+    return segmentoValido(id) && UUID_CANONICO.matcher(id).matches();
+  }
+
   /**
-   * Path público exato: {@code /<recurso>/obter} ou {@code /<recurso>/obter/<segmento válido>}, com
+   * Path público exato: {@code /<recurso>/obter/<UUID>}, com
    * {@code <recurso>} vindo de {@link ImagemBancoEnum}. Recebe o path já decodificado pelo JAX-RS.
    */
   public static boolean ehPathPublico(String requestPath) {
@@ -66,12 +74,9 @@ public final class ImagemPathSeguro {
     String path = requestPath.substring(1);
     for (String recurso : RECURSOS_PUBLICOS) {
       String rota = recurso + "/" + ORIGEM_OBTER;
-      if (path.equals(rota)) {
-        return true;
-      }
       if (path.startsWith(rota + "/")) {
         String resto = path.substring(rota.length() + 1);
-        if (resto.indexOf('/') < 0 && segmentoValido(resto)) {
+        if (resto.indexOf('/') < 0 && idValido(resto)) {
           return true;
         }
       }
@@ -91,21 +96,21 @@ public final class ImagemPathSeguro {
     String destino = route.path().getDestino().replaceAll("^/+", "").replaceAll("/+$", "");
     String sufixo = sufixoCodificado.startsWith("/") ? sufixoCodificado.substring(1) : sufixoCodificado;
 
-    StringBuilder tail = new StringBuilder();
-    if (!sufixo.equals(origem)) {
-      if (!sufixo.startsWith(origem + "/")) {
-        return Optional.empty();
-      }
-      String resto = sufixo.substring(origem.length() + 1);
-      // split com limite -1 mantém segmentos vazios (//, barra final, caminho absoluto) para recusar.
-      for (String bruto : resto.split("/", -1)) {
-        Optional<String> decodificado = decodificarUmaVez(bruto);
-        if (decodificado.isEmpty() || !segmentoValido(decodificado.get())) {
-          return Optional.empty();
-        }
-        tail.append('/').append(decodificado.get());
-      }
+    // O id é obrigatório: obter sem id não tem recurso no BFF.
+    if (!sufixo.startsWith(origem + "/")) {
+      return Optional.empty();
     }
+    String resto = sufixo.substring(origem.length() + 1);
+    // split com limite -1 mantém segmentos vazios (//, barra final, caminho absoluto) para recusar.
+    String[] segmentos = resto.split("/", -1);
+    if (segmentos.length != 1) {
+      return Optional.empty();
+    }
+    Optional<String> decodificado = decodificarUmaVez(segmentos[0]);
+    if (decodificado.isEmpty() || !idValido(decodificado.get())) {
+      return Optional.empty();
+    }
+    String tail = "/" + decodificado.get();
 
     try {
       String base = baseUrl.replaceAll("/+$", "");
@@ -123,7 +128,7 @@ public final class ImagemPathSeguro {
   }
 
   /** Decodifica {@code %XX} uma única vez em UTF-8 estrito; {@code +} não vira espaço (é path, não query). */
-  static Optional<String> decodificarUmaVez(String bruto) {
+  public static Optional<String> decodificarUmaVez(String bruto) {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream(bruto.length());
     for (int i = 0; i < bruto.length(); i++) {
       char c = bruto.charAt(i);

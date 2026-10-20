@@ -95,15 +95,12 @@ public class GatewayProxyService {
     return proxy(method, servico, pathSuffix, requestContext, uriInfo, false);
   }
 
-  private static String decodificarPath(String path) {
+  /** Decodifica uma vez (UTF-8 estrito, {@code +} literal); {@code null} se o path for inválido. */
+  static String decodificarPath(String path) {
     if (path == null || path.indexOf('%') < 0) {
       return path;
     }
-    try {
-      return java.net.URLDecoder.decode(path.replace("+", "%2B"), java.nio.charset.StandardCharsets.UTF_8);
-    } catch (IllegalArgumentException e) {
-      return path;
-    }
+    return ImagemPathSeguro.decodificarUmaVez(path).orElse(null);
   }
 
   private Response proxy(
@@ -147,8 +144,12 @@ public class GatewayProxyService {
       targetUrl = destinoSeguro.toString();
     } else {
       if (pathCodificado) {
-        // Demais rotas mantêm o comportamento anterior (path decodificado uma vez pelo gateway).
-        pathForDestino = decodificarPath(pathForDestino);
+        // Demais rotas: decodifica uma vez; % malformado ou UTF-8 inválido vira 400.
+        String decodificado = decodificarPath(pathForDestino);
+        if (decodificado == null) {
+          return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+        pathForDestino = decodificado;
       }
       String subPath = route.resolveDestino(pathForDestino);
       targetUrl = base.replaceAll("/$", "") + "/" + subPath.replaceAll("^/", "");
