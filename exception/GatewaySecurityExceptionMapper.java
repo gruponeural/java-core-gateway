@@ -29,9 +29,8 @@ public class GatewaySecurityExceptionMapper implements ExceptionMapper<SecurityE
         }
         """.formatted(correlationId, detalhe);
 
-    LOG.warnf(exception, "⚠️ [SECURITY] Tentativa de acesso negada: %s", exception.getMessage());
-    LOG.info("🔙 [RESPOSTA] Status: 401");
-    LOG.infof("📦 [BODY RESPOSTA]: %s", body);
+    // Só a classe e o status: a mensagem e a stack podem trazer token ou dado do cliente.
+    LOG.warnf("⚠️ [SECURITY] Acesso negado (%s). Status: 401", exception.getClass().getSimpleName());
 
     return Response.status(Response.Status.UNAUTHORIZED)
         .type(MediaType.APPLICATION_JSON)

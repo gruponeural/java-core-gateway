@@ -41,9 +41,8 @@ public class GatewayUnhandledExceptionMapper implements ExceptionMapper<Exceptio
         }
         """.formatted(correlationId);
 
-    LOG.errorf(exception, "❌ [ERRO NO GATEWAY] Causa: %s", exception.getMessage());
-    LOG.info("🔙 [RESPOSTA] Status: 500");
-    LOG.infof("📦 [BODY RESPOSTA]: %s", body);
+    // Só a classe e o status: a mensagem e a stack podem trazer token, URL ou dado do cliente.
+    LOG.errorf("❌ [ERRO NO GATEWAY] %s. Status: 500", exception.getClass().getSimpleName());
 
     return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
         .type(MediaType.APPLICATION_JSON)

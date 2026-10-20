@@ -111,6 +111,7 @@ public class GatewayProxyService {
       UriInfo uriInfo,
       boolean pathCodificado) throws IOException, InterruptedException {
 
+    long inicioNanos = System.nanoTime();
     RegisteredRoute route = (RegisteredRoute) requestContext.getProperty(GatewayRouteRegistry.MATCHED_ROUTE_PROPERTY);
     if (route == null) {
       String fullPath = servico + "/" + (pathSuffix == null ? "" : pathSuffix);
@@ -165,17 +166,12 @@ public class GatewayProxyService {
     boolean preserveBinary = route.path().isPreserveBinaryBody();
 
     if (preserveBinary) {
-      LOG.info("📝 [BODY ENTRADA]: <conteúdo binário/multipart omitido>");
       requestBody = prepararBodyBinario(requestBody, contentType, requestContext);
       contentType = requestContext.getHeaderString(HttpHeaders.CONTENT_TYPE);
     } else if (requestBody != null && requestBody.length > 0) {
-    String safeBody = RouteHelper.mascararDadosSensiveis(new String(requestBody, java.nio.charset.StandardCharsets.UTF_8));
-    LOG.infof("📝 [BODY ENTRADA]: %s", safeBody);
     requestBody = RouteHelper.prepararBodyJsonParaProxy(new String(requestBody, java.nio.charset.StandardCharsets.UTF_8));
     contentType = MediaType.APPLICATION_JSON + ";charset=UTF-8";
   }
-
-    LOG.infof("🚀 [PROXY] Encaminhando para: %s", targetUrl);
 
     HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
         .uri(URI.create(targetUrl))
@@ -192,12 +188,12 @@ public class GatewayProxyService {
     byte[] responseBody = downstream.body();
 
     if (downstream.statusCode() == Response.Status.NOT_MODIFIED.getStatusCode()) {
-      LOG.infof("🔙 [RESPOSTA] Status: 304 de %s", route.servico());
+      logResposta(method, route, 304, inicioNanos);
       return repassarHeaders(downstream, Response.notModified()).build();
     }
 
     if (RouteHelper.isRespostaBinaria(responseContentType)) {
-      LOG.infof("🔙 [RESPOSTA] Status: %d de %s (binário)", downstream.statusCode(), route.servico());
+      logResposta(method, route, downstream.statusCode(), inicioNanos);
       return repassarHeaders(downstream, Response.status(downstream.statusCode()))
           .entity(responseBody)
           .type(responseContentType != null ? responseContentType : MediaType.APPLICATION_OCTET_STREAM)
@@ -205,9 +201,7 @@ public class GatewayProxyService {
     }
 
     String responseText = responseBody == null ? null : new String(responseBody, java.nio.charset.StandardCharsets.UTF_8);
-    String safeResponse = RouteHelper.mascararDadosSensiveis(responseText);
-    LOG.infof("🔙 [RESPOSTA] Status: %d de %s", downstream.statusCode(), route.servico());
-    LOG.infof("📦 [BODY RESPOSTA]: %s", safeResponse);
+    logResposta(method, route, downstream.statusCode(), inicioNanos);
 
     // Preservar Content-Type do MS (ex.: text/plain em status/logs); JSON só como fallback.
     String outboundType =
@@ -218,6 +212,12 @@ public class GatewayProxyService {
         .entity(responseText)
         .type(outboundType)
         .build();
+  }
+
+  /** Só método, rota registrada, status e tempo: sem body, cabeçalho, query string ou URL de destino. */
+  private static void logResposta(String method, RegisteredRoute route, int status, long inicioNanos) {
+    long ms = (System.nanoTime() - inicioNanos) / 1_000_000L;
+    LOG.infof("🔙 [PROXY] %s %s/%s -> %d (%d ms)", method, route.servico(), route.path().getOrigem(), status, ms);
   }
 
   private static Response.ResponseBuilder repassarHeaders(
