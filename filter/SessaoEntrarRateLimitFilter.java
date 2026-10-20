@@ -9,16 +9,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.jboss.logging.Logger;
 
+import io.vertx.core.http.HttpServerRequest;
 import jakarta.annotation.Priority;
 import jakarta.ws.rs.Priorities;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.Provider;
 
 /**
  * Rate limit simples em memória para {@code sessao/entrar} (proteção do gateway público).
- * Janela de 60s / 20 tentativas por IP (ou 10.0.0.0 se o remoto for nulo).
+ * Janela de 60s / 20 tentativas por IP. O IP é o último do X-Forwarded-For (o que o nosso proxy
+ * acrescenta; o primeiro vem do cliente e pode ser forjado) ou, sem o header, o IP remoto.
  */
 @Provider
 @Priority(Priorities.AUTHENTICATION - 10)
@@ -29,6 +32,9 @@ public class SessaoEntrarRateLimitFilter implements ContainerRequestFilter {
   private static final long JANELA_MS = 60_000L;
 
   private static final ConcurrentHashMap<String, Window> WINDOWS = new ConcurrentHashMap<>();
+
+  @Context
+  HttpServerRequest httpServerRequest;
 
   @Override
   public void filter(ContainerRequestContext requestContext) throws IOException {
@@ -44,7 +50,10 @@ public class SessaoEntrarRateLimitFilter implements ContainerRequestFilter {
       return;
     }
 
-    String clientKey = resolveClientKey(requestContext);
+    String remoto = httpServerRequest != null && httpServerRequest.remoteAddress() != null
+        ? httpServerRequest.remoteAddress().hostAddress()
+        : null;
+    String clientKey = resolveClientKey(requestContext.getHeaderString("X-Forwarded-For"), remoto);
     long now = Instant.now().toEpochMilli();
     purgeExpired(now);
 
@@ -70,10 +79,18 @@ public class SessaoEntrarRateLimitFilter implements ContainerRequestFilter {
     }
   }
 
-  private static String resolveClientKey(ContainerRequestContext ctx) {
-    String forwarded = ctx.getHeaderString("X-Forwarded-For");
-    if (forwarded != null && !forwarded.isBlank()) {
-      return forwarded.split(",")[0].trim();
+  static String resolveClientKey(String forwarded, String remoto) {
+    if (forwarded != null) {
+      String[] partes = forwarded.split(",");
+      for (int i = partes.length - 1; i >= 0; i--) {
+        String ip = partes[i].trim();
+        if (!ip.isEmpty()) {
+          return ip;
+        }
+      }
+    }
+    if (remoto != null && !remoto.isBlank()) {
+      return remoto;
     }
     return "unknown";
   }
