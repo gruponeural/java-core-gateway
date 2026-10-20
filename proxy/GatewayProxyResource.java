@@ -4,6 +4,7 @@ import io.smallrye.common.annotation.RunOnVirtualThread;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.Encoded;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
@@ -23,15 +24,19 @@ public class GatewayProxyResource {
   @Inject
   GatewayProxyService proxyService;
 
+  /**
+   * O {@code path} chega codificado ({@link Encoded}): o serviço decodifica uma única vez, e a rota
+   * pública {@code imagem/obter} valida segmento a segmento antes de montar o destino.
+   */
   @GET
   @Path("{servico}/{path:.*}")
   @Produces(MediaType.WILDCARD)
   public Response get(
       @PathParam("servico") String servico,
-      @PathParam("path") String path,
+      @Encoded @PathParam("path") String path,
       @Context ContainerRequestContext requestContext,
       @Context UriInfo uriInfo) throws Exception {
-    return proxyService.proxy("GET", servico, path, requestContext, uriInfo);
+    return proxyService.proxyGetCodificado(servico, path, requestContext, uriInfo);
   }
 
   @POST

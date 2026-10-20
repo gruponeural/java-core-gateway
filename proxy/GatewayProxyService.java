@@ -18,6 +18,7 @@ import org.jboss.logging.Logger;
 
 import br.com.gruponeural.core.gateway.filter.CorrelationIdFilter;
 import br.com.gruponeural.core.gateway.route.GatewayRouteRegistry;
+import br.com.gruponeural.core.gateway.route.ImagemPathSeguro;
 import br.com.gruponeural.core.gateway.route.MultipartProxySupport;
 import br.com.gruponeural.core.gateway.route.RegisteredRoute;
 import br.com.gruponeural.core.gateway.route.RouteHelper;
@@ -76,12 +77,42 @@ public class GatewayProxyService {
         .build();
   }
 
+  /** GET com o sufixo ainda codificado ({@code @Encoded}); ver {@link ImagemPathSeguro}. */
+  public Response proxyGetCodificado(
+      String servico,
+      String pathSuffixCodificado,
+      ContainerRequestContext requestContext,
+      UriInfo uriInfo) throws IOException, InterruptedException {
+    return proxy("GET", servico, pathSuffixCodificado, requestContext, uriInfo, true);
+  }
+
   public Response proxy(
       String method,
       String servico,
       String pathSuffix,
       ContainerRequestContext requestContext,
       UriInfo uriInfo) throws IOException, InterruptedException {
+    return proxy(method, servico, pathSuffix, requestContext, uriInfo, false);
+  }
+
+  private static String decodificarPath(String path) {
+    if (path == null || path.indexOf('%') < 0) {
+      return path;
+    }
+    try {
+      return java.net.URLDecoder.decode(path.replace("+", "%2B"), java.nio.charset.StandardCharsets.UTF_8);
+    } catch (IllegalArgumentException e) {
+      return path;
+    }
+  }
+
+  private Response proxy(
+      String method,
+      String servico,
+      String pathSuffix,
+      ContainerRequestContext requestContext,
+      UriInfo uriInfo,
+      boolean pathCodificado) throws IOException, InterruptedException {
 
     RegisteredRoute route = (RegisteredRoute) requestContext.getProperty(GatewayRouteRegistry.MATCHED_ROUTE_PROPERTY);
     if (route == null) {
@@ -101,9 +132,27 @@ public class GatewayProxyService {
         pathForDestino = pathForDestino.substring(1);
       }
     }
-    String subPath = route.resolveDestino(pathForDestino);
     String base = route.resolveBaseUrl(routeRegistry);
-    String targetUrl = base.replaceAll("/$", "") + "/" + subPath.replaceAll("^/", "");
+    String targetUrl;
+    if (ImagemPathSeguro.ehRotaImagemObter(route)) {
+      if (!pathCodificado) {
+        // Sem o path bruto não dá para decodificar uma única vez com segurança.
+        return Response.status(Response.Status.BAD_REQUEST).build();
+      }
+      URI destinoSeguro = ImagemPathSeguro.destinoSeguro(base, route, pathForDestino).orElse(null);
+      if (destinoSeguro == null) {
+        LOG.warn("⛔ [PROXY] Caminho de imagem recusado (400)");
+        return Response.status(Response.Status.BAD_REQUEST).build();
+      }
+      targetUrl = destinoSeguro.toString();
+    } else {
+      if (pathCodificado) {
+        // Demais rotas mantêm o comportamento anterior (path decodificado uma vez pelo gateway).
+        pathForDestino = decodificarPath(pathForDestino);
+      }
+      String subPath = route.resolveDestino(pathForDestino);
+      targetUrl = base.replaceAll("/$", "") + "/" + subPath.replaceAll("^/", "");
+    }
 
     String query = uriInfo.getRequestUri().getRawQuery();
     if (query != null && !query.isBlank()) {

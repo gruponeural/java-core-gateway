@@ -12,6 +12,7 @@ import org.apache.commons.codec.digest.HmacUtils;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.ConfigProvider;
 
+import br.com.gruponeural.core.gateway.route.ImagemPathSeguro;
 import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
@@ -34,7 +35,7 @@ public class PublicValidatorService {
       String clientTimestamp,
       String clientType,
       String clienteExclusivo) {
-    if (clienteExclusivo == null && requestPath != null && requestPath.contains("/imagem/obter")) {
+    if (clienteExclusivo == null && ImagemPathSeguro.ehPathPublico(requestPath)) {
       return;
     }
 
