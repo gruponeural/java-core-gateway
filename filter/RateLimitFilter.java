@@ -150,12 +150,20 @@ public class RateLimitFilter implements ContainerRequestFilter {
     if (!ctx.hasEntity()) {
       return null;
     }
-    byte[] corpo;
-    try (InputStream in = ctx.getEntityStream()) {
-      corpo = in.readAllBytes();
-    }
-    ctx.setEntityStream(new ByteArrayInputStream(corpo));
+    // Lê no máximo MAX_CORPO_LIDO + 1 bytes. Acima do teto não extrai conta, mas o proxy recebe o corpo inteiro.
+    InputStream in = ctx.getEntityStream();
+    byte[] corpo = lerPrefixo(in);
+    ctx.setEntityStream(reenviar(corpo, in));
     return corpo;
+  }
+
+  static byte[] lerPrefixo(InputStream in) throws IOException {
+    return in.readNBytes(MAX_CORPO_LIDO + 1);
+  }
+
+  static InputStream reenviar(byte[] prefixo, InputStream resto) {
+    InputStream inicio = new ByteArrayInputStream(prefixo);
+    return prefixo.length <= MAX_CORPO_LIDO ? inicio : new java.io.SequenceInputStream(inicio, resto);
   }
 
   private static Optional<JsonNode> json(byte[] corpo) {
