@@ -1,12 +1,9 @@
 package br.com.gruponeural.core.gateway.filter;
 
 import java.io.IOException;
-import java.time.Instant;
-import java.util.Iterator;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.jboss.logging.Logger;
@@ -31,14 +28,30 @@ public class SessaoEntrarRateLimitFilter implements ContainerRequestFilter {
 
   private static final Logger LOG = Logger.getLogger(SessaoEntrarRateLimitFilter.class);
   private static final int MAX_TENTATIVAS = 20;
-  private static final long JANELA_MS = 60_000L;
+  private static final Duration JANELA = Duration.ofSeconds(60);
 
-  private static final ConcurrentHashMap<String, Window> WINDOWS = new ConcurrentHashMap<>();
+  private volatile RateLimitContador contador;
 
   @Context
   HttpServerRequest httpServerRequest;
 
   private volatile ProxiesConfiaveis proxies;
+
+  private RateLimitContador contador() {
+    RateLimitContador c = contador;
+    if (c == null) {
+      synchronized (this) {
+        c = contador;
+        if (c == null) {
+          long max = ConfigProvider.getConfig()
+              .getOptionalValue("gateway.rate-limit.max-entradas", Long.class).orElse(10_000L);
+          c = new RateLimitContador(max, JANELA);
+          contador = c;
+        }
+      }
+    }
+    return c;
+  }
 
   private ProxiesConfiaveis proxies() {
     ProxiesConfiaveis p = proxies;
@@ -69,19 +82,8 @@ public class SessaoEntrarRateLimitFilter implements ContainerRequestFilter {
         ? httpServerRequest.remoteAddress().hostAddress()
         : null;
     String clientKey = resolveClientKey(requestContext.getHeaderString("X-Forwarded-For"), remoto, proxies());
-    long now = Instant.now().toEpochMilli();
-    purgeExpired(now);
-
-    Window window = WINDOWS.compute(clientKey, (k, existing) -> {
-      if (existing == null || now - existing.startedAtMs >= JANELA_MS) {
-        return new Window(now);
-      }
-      existing.count.incrementAndGet();
-      return existing;
-    });
-
-    if (window.count.get() > MAX_TENTATIVAS) {
-      LOG.warnf("Rate limit sessao/entrar excedido para %s", clientKey);
+    if (!contador().permitir(clientKey, MAX_TENTATIVAS)) {
+      LOG.warnf("Rate limit sessao/entrar excedido (cliente %s)", RateLimitContador.hashParaLog(clientKey));
       requestContext.abortWith(
           Response.status(429)
               .entity(Map.of(
@@ -123,27 +125,5 @@ public class SessaoEntrarRateLimitFilter implements ContainerRequestFilter {
       }
     }
     return atual;
-  }
-
-  private static void purgeExpired(long now) {
-    if (WINDOWS.size() < 1000) {
-      return;
-    }
-    Iterator<Map.Entry<String, Window>> it = WINDOWS.entrySet().iterator();
-    while (it.hasNext()) {
-      Map.Entry<String, Window> e = it.next();
-      if (now - e.getValue().startedAtMs >= JANELA_MS) {
-        it.remove();
-      }
-    }
-  }
-
-  private static final class Window {
-    final long startedAtMs;
-    final AtomicInteger count = new AtomicInteger(1);
-
-    Window(long startedAtMs) {
-      this.startedAtMs = startedAtMs;
-    }
   }
 }
