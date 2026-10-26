@@ -37,8 +37,9 @@ import jakarta.ws.rs.ext.Provider;
  * Rate limit em memória por IP e por rota, só nas rotas de autenticação, escrita sensível e
  * leitura pública de ranking ({@link #REGRAS}). Nenhuma outra rota passa pelo contador.
  * <p>
- * Chave: renovar por IP e também por {@code idSessao} do corpo (UUID); entrar-provedor só por IP; entrar e recuperação de senha
- * por IP e também por conta (CPF/e-mail do corpo, em hash); cadastro e ranking/listar só por IP.
+ * Chave: renovar por IP e também por {@code idSessao} do corpo (UUID); entrar-provedor só por IP; entrar, recuperação de senha
+ * e confirmação de e-mail por IP e também por conta (CPF/e-mail do corpo, em hash); cadastro, verificar-email,
+ * cancelar-cadastro-pendente e ranking/listar só por IP.
  * <p>
  * Properties: {@code gateway.rate-limit.<regra>.limite} (tentativas por janela e por rota),
  * {@code gateway.rate-limit.<regra>.limite-conta} (entrar e recuperação),
@@ -76,6 +77,10 @@ public class RateLimitFilter implements ContainerRequestFilter {
       new Regra("sessao-entrar-provedor", Set.of("sessao/entrar-provedor"), 20, TipoChave.IP, null, 0),
       new Regra("sessao-renovar", Set.of("sessao/renovar"), 30, TipoChave.SESSAO, null, 0),
       new Regra("cadastro", Set.of("pessoa/cadastrar", "pessoa/cadastrar-provedor"), 10, TipoChave.IP, null, 0),
+      new Regra("verificar-email", Set.of("pessoa/verificar-email"), 5, TipoChave.IP, null, 0),
+      new Regra("confirmacao-email", Set.of("pessoa/reenviar-token", "pessoa/confirmar-email"), 3,
+          TipoChave.IP_E_CONTA, "email", 3),
+      new Regra("cancelar-cadastro-pendente", Set.of("pessoa/cancelar-cadastro-pendente"), 5, TipoChave.IP, null, 0),
       new Regra("recuperacao-senha",
           Set.of("pessoa/recuperar-senha", "pessoa/reenviar-token-senha", "pessoa/redefinir-senha"), 5,
           TipoChave.IP_E_CONTA, "email", 3),
