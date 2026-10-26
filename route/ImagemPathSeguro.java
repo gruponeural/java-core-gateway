@@ -86,7 +86,7 @@ public final class ImagemPathSeguro {
 
   /**
    * Monta a URL de destino a partir do sufixo após o serviço ainda codificado (ex.: {@code obter/abc}).
-   * Vazio quando qualquer regra falha; quem chama responde 400 sem detalhar o motivo.
+   * Vazio quando qualquer regra falha; quem chama responde 404 sem detalhar o motivo nem ecoar o input.
    */
   public static Optional<URI> destinoSeguro(String baseUrl, RegisteredRoute route, String sufixoCodificado) {
     if (baseUrl == null || route == null || sufixoCodificado == null) {

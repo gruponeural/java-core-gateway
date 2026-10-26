@@ -135,12 +135,13 @@ public class GatewayProxyService {
     if (ImagemPathSeguro.ehRotaImagemObter(route)) {
       if (!pathCodificado) {
         // Sem o path bruto não dá para decodificar uma única vez com segurança.
-        return Response.status(Response.Status.BAD_REQUEST).build();
+        return Response.status(Response.Status.NOT_FOUND).build();
       }
       URI destinoSeguro = ImagemPathSeguro.destinoSeguro(base, route, pathForDestino).orElse(null);
       if (destinoSeguro == null) {
-        LOG.warn("⛔ [PROXY] Caminho de imagem recusado (400)");
-        return Response.status(Response.Status.BAD_REQUEST).build();
+        // Sem o caminho bruto no log: só o fato da recusa (evita eco de path traversal).
+        LOG.warn("⛔ [PROXY] Caminho de imagem recusado (404)");
+        return Response.status(Response.Status.NOT_FOUND).build();
       }
       targetUrl = destinoSeguro.toString();
     } else {
