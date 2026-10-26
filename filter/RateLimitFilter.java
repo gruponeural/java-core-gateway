@@ -34,11 +34,11 @@ import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.Provider;
 
 /**
- * Rate limit em memória por IP e por rota, só nas rotas de autenticação e escrita sensível
- * ({@link #REGRAS}). Nenhuma outra rota passa pelo contador.
+ * Rate limit em memória por IP e por rota, só nas rotas de autenticação, escrita sensível e
+ * leitura pública de ranking ({@link #REGRAS}). Nenhuma outra rota passa pelo contador.
  * <p>
  * Chave: renovar por IP e também por {@code idSessao} do corpo (UUID); entrar-provedor só por IP; entrar e recuperação de senha
- * por IP e também por conta (CPF/e-mail do corpo, em hash); cadastro só por IP.
+ * por IP e também por conta (CPF/e-mail do corpo, em hash); cadastro e ranking/listar só por IP.
  * <p>
  * Properties: {@code gateway.rate-limit.<regra>.limite} (tentativas por janela e por rota),
  * {@code gateway.rate-limit.<regra>.limite-conta} (entrar e recuperação),
@@ -78,7 +78,9 @@ public class RateLimitFilter implements ContainerRequestFilter {
       new Regra("cadastro", Set.of("pessoa/cadastrar", "pessoa/cadastrar-provedor"), 10, TipoChave.IP, null, 0),
       new Regra("recuperacao-senha",
           Set.of("pessoa/recuperar-senha", "pessoa/reenviar-token-senha", "pessoa/redefinir-senha"), 5,
-          TipoChave.IP_E_CONTA, "email", 3));
+          TipoChave.IP_E_CONTA, "email", 3),
+      // Leitura pública da home/paginação; 120/min por IP cobre vários usuários atrás do mesmo NAT.
+      new Regra("ranking-listar", Set.of("produto/ranking/listar"), 120, TipoChave.IP, null, 0));
 
   /** Limite por IP do renovar, além do limite por idSessao. */
   static final int LIMITE_IP_RENOVAR_PADRAO = 30;
