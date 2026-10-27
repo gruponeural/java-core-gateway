@@ -86,10 +86,14 @@ public class RateLimitFilter implements ContainerRequestFilter {
       new Regra("recuperacao-senha",
           Set.of("pessoa/recuperar-senha", "pessoa/reenviar-token-senha", "pessoa/redefinir-senha"), 5,
           TipoChave.IP_E_CONTA, "email", 3),
-      // Leitura pública da home/paginação; 120/min por IP cobre vários usuários atrás do mesmo NAT.
-      new Regra("ranking-listar", Set.of("produto/ranking/listar"), 120, TipoChave.IP, null, 0),
+      // Leitura pública da home/paginação/busca (o app usa GET inicio/obter); 120/min por IP cobre vários
+      // usuários atrás do mesmo NAT.
+      new Regra("ranking-listar", Set.of("produto/ranking/listar", "inicio/obter"), 120, TipoChave.IP, null, 0),
       // Cadastro de bairro: 20/min por IP aqui; 5/min por usuário validado no filtro pós-auth.
       new Regra("bairro-criar", Set.of("localizacao/bairro/criar"), 5, TipoChave.IP, null, 0));
+
+  /** Rotas limitadas só em GET (as demais valem só para POST). */
+  static final Set<String> ROTAS_GET = Set.of("inicio/obter");
 
   /** Limite por IP do renovar, além do limite por idSessao. */
   static final int LIMITE_IP_RENOVAR_PADRAO = 30;
@@ -138,6 +142,18 @@ public class RateLimitFilter implements ContainerRequestFilter {
 
   private record Estado(RateLimitContador contador, ProxiesConfiaveis proxies, Map<String, Integer> limites, Map<String, Integer> limitesConta,
       long janelaSegundos, String cabecalho, int limiteIpRenovar, int limiteIpBairroCriar) {
+  }
+
+  /** Só para teste: estado fixo (limite de ranking-listar e proxies), sem ler Config. */
+  void usarEstadoParaTeste(int limiteRankingListar, ProxiesConfiaveis proxies, HttpServerRequest req) {
+    Map<String, Integer> limites = new LinkedHashMap<>();
+    for (Regra r : REGRAS) {
+      limites.put(r.nome(), r.limitePadrao());
+    }
+    limites.put("ranking-listar", limiteRankingListar);
+    estado = new Estado(new RateLimitContador(1000, Duration.ofSeconds(60)), proxies, Map.copyOf(limites), Map.of(), 60,
+        CABECALHO_PADRAO, LIMITE_IP_RENOVAR_PADRAO, LIMITE_IP_BAIRRO_CRIAR_PADRAO);
+    httpServerRequest = req;
   }
 
   @Override
@@ -243,10 +259,14 @@ public class RateLimitFilter implements ContainerRequestFilter {
   }
 
   static Optional<Regra> regraPara(String metodo, String path) {
-    if (path == null || !"POST".equalsIgnoreCase(metodo)) {
+    if (path == null || metodo == null) {
       return Optional.empty();
     }
     String p = normalizar(path);
+    boolean metodoLimitado = ROTAS_GET.contains(p) ? "GET".equalsIgnoreCase(metodo) : "POST".equalsIgnoreCase(metodo);
+    if (!metodoLimitado) {
+      return Optional.empty();
+    }
     return REGRAS.stream().filter(r -> r.paths().contains(p)).findFirst();
   }
 
