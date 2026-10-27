@@ -39,7 +39,7 @@ import jakarta.ws.rs.ext.Provider;
  * <p>
  * Chave: renovar por IP e também por {@code idSessao} do corpo (UUID); entrar-provedor só por IP; entrar, recuperação de senha
  * e confirmação de e-mail por IP e também por conta (CPF/e-mail do corpo, em hash); cadastro, verificar-email,
- * cancelar-cadastro-pendente e ranking/listar só por IP.
+ * cancelar-cadastro-pendente e ranking/listar só por IP; bairro/criar por usuário ({@code upn} do JWT em hash).
  * <p>
  * Properties: {@code gateway.rate-limit.<regra>.limite} (tentativas por janela e por rota),
  * {@code gateway.rate-limit.<regra>.limite-conta} (entrar e recuperação),
@@ -55,7 +55,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
 
   private static final Logger LOG = Logger.getLogger(RateLimitFilter.class);
 
-  enum TipoChave { IP, SESSAO, IP_E_CONTA }
+  enum TipoChave { IP, SESSAO, IP_E_CONTA, USUARIO }
 
   record Regra(String nome, Set<String> paths, int limitePadrao, TipoChave tipo, String campoConta,
       int limiteContaPadrao) {
@@ -85,7 +85,9 @@ public class RateLimitFilter implements ContainerRequestFilter {
           Set.of("pessoa/recuperar-senha", "pessoa/reenviar-token-senha", "pessoa/redefinir-senha"), 5,
           TipoChave.IP_E_CONTA, "email", 3),
       // Leitura pública da home/paginação; 120/min por IP cobre vários usuários atrás do mesmo NAT.
-      new Regra("ranking-listar", Set.of("produto/ranking/listar"), 120, TipoChave.IP, null, 0));
+      new Regra("ranking-listar", Set.of("produto/ranking/listar"), 120, TipoChave.IP, null, 0),
+      // Cadastro de bairro (inclui forçar): 5/min por usuário autenticado (upn do JWT em hash).
+      new Regra("bairro-criar", Set.of("localizacao/bairro/criar"), 5, TipoChave.USUARIO, null, 0));
 
   /** Limite por IP do renovar, além do limite por idSessao. */
   static final int LIMITE_IP_RENOVAR_PADRAO = 30;
@@ -147,7 +149,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
         : null;
     String clientKey = resolveClientKey(requestContext.getHeaderString(e.cabecalho()), remoto, e.proxies());
     Regra r = regra.get();
-    byte[] corpo = r.tipo() == TipoChave.IP ? null : lerCorpo(requestContext);
+    byte[] corpo = (r.tipo() == TipoChave.IP || r.tipo() == TipoChave.USUARIO) ? null : lerCorpo(requestContext);
 
     boolean permitido;
     if (r.tipo() == TipoChave.SESSAO) {
@@ -156,6 +158,10 @@ public class RateLimitFilter implements ContainerRequestFilter {
       if (permitido && sid.isPresent()) {
         permitido = e.contador().permitir(path + "|sid:" + sid.get(), e.limites().get(r.nome()));
       }
+    } else if (r.tipo() == TipoChave.USUARIO) {
+      Optional<String> usuario = chaveUsuario(requestContext.getHeaderString("Authorization"));
+      String chave = usuario.orElse("ip:" + clientKey);
+      permitido = e.contador().permitir(path + "|" + chave, e.limites().get(r.nome()));
     } else {
       permitido = e.contador().permitir(path + "|ip:" + clientKey, e.limites().get(r.nome()));
       if (permitido && r.tipo() == TipoChave.IP_E_CONTA) {
@@ -214,6 +220,33 @@ public class RateLimitFilter implements ContainerRequestFilter {
         return Optional.empty();
       }
     });
+  }
+
+  /**
+   * Usuário do JWT ({@code upn}) em hash SHA-256. Só decodifica o payload (sem validar assinatura);
+   * a autenticação continua no {@code GatewayJwtAuthFilter}. Valor nunca vai para o log em claro.
+   */
+  static Optional<String> chaveUsuario(String authorization) {
+    if (authorization == null || !authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+      return Optional.empty();
+    }
+    String token = authorization.substring(7).trim();
+    int p1 = token.indexOf('.');
+    int p2 = p1 < 0 ? -1 : token.indexOf('.', p1 + 1);
+    if (p1 <= 0 || p2 <= p1) {
+      return Optional.empty();
+    }
+    try {
+      byte[] json = java.util.Base64.getUrlDecoder().decode(token.substring(p1 + 1, p2));
+      JsonNode n = JSON.readTree(json);
+      String upn = n.path("upn").asText(null);
+      if (upn == null || upn.isBlank()) {
+        return Optional.empty();
+      }
+      return Optional.of("usr:" + sha256(upn.trim()));
+    } catch (RuntimeException | IOException ex) {
+      return Optional.empty();
+    }
   }
 
   /** Chave da conta (CPF só dígitos ou e-mail minúsculo), sempre em hash SHA-256. */
