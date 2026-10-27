@@ -49,7 +49,8 @@ import jakarta.ws.rs.ext.Provider;
  * {@code gateway.proxies-confiaveis} (IPs/CIDRs ou {@code nenhum}; default: nenhum proxy confiável,
  * sempre o IP remoto), {@code gateway.proxies-confiaveis.cabecalho} (default X-Forwarded-For),
  * {@code gateway.rate-limit.sessao-renovar.limite-ip} (default 30) e
- * {@code gateway.rate-limit.bairro-criar.limite-ip} (default 20). O IP vem de {@link #resolveClientKey}.
+ * {@code gateway.rate-limit.bairro-criar.limite-ip} (default 20) e
+ * {@code gateway.rate-limit.favorito-ip.limite} (default 120, obter e salvar favoritos). O IP vem de {@link #resolveClientKey}.
  */
 @Provider
 @Priority(Priorities.AUTHENTICATION - 10)
@@ -90,7 +91,10 @@ public class RateLimitFilter implements ContainerRequestFilter {
       // usuários atrás do mesmo NAT.
       new Regra("ranking-listar", Set.of("produto/ranking/listar", "inicio/obter"), 120, TipoChave.IP, null, 0),
       // Cadastro de bairro: 20/min por IP aqui; 5/min por usuário validado no filtro pós-auth.
-      new Regra("bairro-criar", Set.of("localizacao/bairro/criar"), 5, TipoChave.IP, null, 0));
+      new Regra("bairro-criar", Set.of("localizacao/bairro/criar"), 5, TipoChave.IP, null, 0),
+      // Favoritos: 120/min por IP aqui; por usuário validado em RateLimitFavoritoUsuarioFilter.
+      new Regra("favorito-ip", Set.of("produto/favorito/obter", "produto/favorito/salvar"), 120, TipoChave.IP,
+          null, 0));
 
   /** Rotas limitadas só em GET (as demais valem só para POST). */
   static final Set<String> ROTAS_GET = Set.of("inicio/obter");
@@ -298,6 +302,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
     body.put("tipo", "MENSAGEM");
     body.put("mensagem", mensagem);
     body.put("listaViolacao", List.of());
+    body.put("codigo", "RATE_LIMIT");
     return Response.status(429)
         .type(MediaType.APPLICATION_JSON_TYPE)
         .header("Retry-After", String.valueOf(retryAfterSegundos))
