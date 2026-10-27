@@ -22,6 +22,9 @@ public class GatewayJwtAuthFilter implements ContainerRequestFilter {
 
   private static final String[] HEADERS_IDENTIDADE = { "X-Id-Pessoa", "X-Id-Usuario" };
 
+  /** Upn do JWT já validado (assinatura + sessão). Usado pelo rate limit pós-auth; nunca confiar no cliente. */
+  public static final String UPN_VALIDADO_PROPERTY = "gateway.jwt.upn-validado";
+
   @Inject
   JwtValidatorService jwtValidatorService;
 
@@ -43,6 +46,7 @@ public class GatewayJwtAuthFilter implements ContainerRequestFilter {
 
     LOG.info("🔐 [AUTH] Validando token JWT...");
     String identityId = jwtValidatorService.validar(requestContext.getHeaderString("Authorization"));
+    requestContext.setProperty(UPN_VALIDADO_PROPERTY, identityId);
     requestContext.getHeaders().putSingle(jwtValidatorService.getIdentityHeader(), identityId);
     requestContext.getHeaders().remove("Authorization");
   }

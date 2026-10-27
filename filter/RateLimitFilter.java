@@ -39,15 +39,17 @@ import jakarta.ws.rs.ext.Provider;
  * <p>
  * Chave: renovar por IP e também por {@code idSessao} do corpo (UUID); entrar-provedor só por IP; entrar, recuperação de senha
  * e confirmação de e-mail por IP e também por conta (CPF/e-mail do corpo, em hash); cadastro, verificar-email,
- * cancelar-cadastro-pendente e ranking/listar só por IP; bairro/criar por usuário ({@code upn} do JWT em hash).
+ * cancelar-cadastro-pendente e ranking/listar só por IP; bairro/criar 20/min por IP aqui
+ * (o limite por usuário autenticado fica em {@link RateLimitBairroUsuarioFilter}, após o JWT).
  * <p>
  * Properties: {@code gateway.rate-limit.<regra>.limite} (tentativas por janela e por rota),
  * {@code gateway.rate-limit.<regra>.limite-conta} (entrar e recuperação),
  * {@code gateway.rate-limit.janela-segundos} (default 60, também é o {@code expireAfterWrite}),
  * {@code gateway.rate-limit.max-entradas} (default 10000, {@code maximumSize}) e
  * {@code gateway.proxies-confiaveis} (IPs/CIDRs ou {@code nenhum}; default: nenhum proxy confiável,
- * sempre o IP remoto), {@code gateway.proxies-confiaveis.cabecalho} (default X-Forwarded-For) e
- * {@code gateway.rate-limit.sessao-renovar.limite-ip} (default 30). O IP vem de {@link #resolveClientKey}.
+ * sempre o IP remoto), {@code gateway.proxies-confiaveis.cabecalho} (default X-Forwarded-For),
+ * {@code gateway.rate-limit.sessao-renovar.limite-ip} (default 30) e
+ * {@code gateway.rate-limit.bairro-criar.limite-ip} (default 20). O IP vem de {@link #resolveClientKey}.
  */
 @Provider
 @Priority(Priorities.AUTHENTICATION - 10)
@@ -55,7 +57,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
 
   private static final Logger LOG = Logger.getLogger(RateLimitFilter.class);
 
-  enum TipoChave { IP, SESSAO, IP_E_CONTA, USUARIO }
+  enum TipoChave { IP, SESSAO, IP_E_CONTA }
 
   record Regra(String nome, Set<String> paths, int limitePadrao, TipoChave tipo, String campoConta,
       int limiteContaPadrao) {
@@ -86,11 +88,13 @@ public class RateLimitFilter implements ContainerRequestFilter {
           TipoChave.IP_E_CONTA, "email", 3),
       // Leitura pública da home/paginação; 120/min por IP cobre vários usuários atrás do mesmo NAT.
       new Regra("ranking-listar", Set.of("produto/ranking/listar"), 120, TipoChave.IP, null, 0),
-      // Cadastro de bairro (inclui forçar): 5/min por usuário autenticado (upn do JWT em hash).
-      new Regra("bairro-criar", Set.of("localizacao/bairro/criar"), 5, TipoChave.USUARIO, null, 0));
+      // Cadastro de bairro: 20/min por IP aqui; 5/min por usuário validado no filtro pós-auth.
+      new Regra("bairro-criar", Set.of("localizacao/bairro/criar"), 5, TipoChave.IP, null, 0));
 
   /** Limite por IP do renovar, além do limite por idSessao. */
   static final int LIMITE_IP_RENOVAR_PADRAO = 30;
+  /** Limite por IP de bairro/criar (barreira antes da autenticação). */
+  static final int LIMITE_IP_BAIRRO_CRIAR_PADRAO = 20;
   static final String PROP_PROXIES = "gateway.proxies-confiaveis";
   static final String PROP_CABECALHO = "gateway.proxies-confiaveis.cabecalho";
   static final String CABECALHO_PADRAO = "X-Forwarded-For";
@@ -133,7 +137,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
   private volatile Estado estado;
 
   private record Estado(RateLimitContador contador, ProxiesConfiaveis proxies, Map<String, Integer> limites, Map<String, Integer> limitesConta,
-      long janelaSegundos, String cabecalho, int limiteIpRenovar) {
+      long janelaSegundos, String cabecalho, int limiteIpRenovar, int limiteIpBairroCriar) {
   }
 
   @Override
@@ -149,7 +153,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
         : null;
     String clientKey = resolveClientKey(requestContext.getHeaderString(e.cabecalho()), remoto, e.proxies());
     Regra r = regra.get();
-    byte[] corpo = (r.tipo() == TipoChave.IP || r.tipo() == TipoChave.USUARIO) ? null : lerCorpo(requestContext);
+    byte[] corpo = r.tipo() == TipoChave.IP ? null : lerCorpo(requestContext);
 
     boolean permitido;
     if (r.tipo() == TipoChave.SESSAO) {
@@ -158,12 +162,9 @@ public class RateLimitFilter implements ContainerRequestFilter {
       if (permitido && sid.isPresent()) {
         permitido = e.contador().permitir(path + "|sid:" + sid.get(), e.limites().get(r.nome()));
       }
-    } else if (r.tipo() == TipoChave.USUARIO) {
-      Optional<String> usuario = chaveUsuario(requestContext.getHeaderString("Authorization"));
-      String chave = usuario.orElse("ip:" + clientKey);
-      permitido = e.contador().permitir(path + "|" + chave, e.limites().get(r.nome()));
     } else {
-      permitido = e.contador().permitir(path + "|ip:" + clientKey, e.limites().get(r.nome()));
+      int limiteIp = "bairro-criar".equals(r.nome()) ? e.limiteIpBairroCriar() : e.limites().get(r.nome());
+      permitido = e.contador().permitir(path + "|ip:" + clientKey, limiteIp);
       if (permitido && r.tipo() == TipoChave.IP_E_CONTA) {
         Optional<String> conta = chaveConta(r, corpo);
         if (conta.isPresent()) {
@@ -220,33 +221,6 @@ public class RateLimitFilter implements ContainerRequestFilter {
         return Optional.empty();
       }
     });
-  }
-
-  /**
-   * Usuário do JWT ({@code upn}) em hash SHA-256. Só decodifica o payload (sem validar assinatura);
-   * a autenticação continua no {@code GatewayJwtAuthFilter}. Valor nunca vai para o log em claro.
-   */
-  static Optional<String> chaveUsuario(String authorization) {
-    if (authorization == null || !authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
-      return Optional.empty();
-    }
-    String token = authorization.substring(7).trim();
-    int p1 = token.indexOf('.');
-    int p2 = p1 < 0 ? -1 : token.indexOf('.', p1 + 1);
-    if (p1 <= 0 || p2 <= p1) {
-      return Optional.empty();
-    }
-    try {
-      byte[] json = java.util.Base64.getUrlDecoder().decode(token.substring(p1 + 1, p2));
-      JsonNode n = JSON.readTree(json);
-      String upn = n.path("upn").asText(null);
-      if (upn == null || upn.isBlank()) {
-        return Optional.empty();
-      }
-      return Optional.of("usr:" + sha256(upn.trim()));
-    } catch (RuntimeException | IOException ex) {
-      return Optional.empty();
-    }
   }
 
   /** Chave da conta (CPF só dígitos ou e-mail minúsculo), sempre em hash SHA-256. */
@@ -328,6 +302,8 @@ public class RateLimitFilter implements ContainerRequestFilter {
           String cabecalho = nomeCabecalho(config.getOptionalValue(PROP_CABECALHO, String.class));
           int limiteIpRenovar = config.getOptionalValue("gateway.rate-limit.sessao-renovar.limite-ip", Integer.class)
               .orElse(LIMITE_IP_RENOVAR_PADRAO);
+          int limiteIpBairroCriar = config.getOptionalValue("gateway.rate-limit.bairro-criar.limite-ip", Integer.class)
+              .orElse(LIMITE_IP_BAIRRO_CRIAR_PADRAO);
           Map<String, Integer> limitesConta = new LinkedHashMap<>();
           for (Regra r : REGRAS) {
             if (r.tipo() == TipoChave.IP_E_CONTA) {
@@ -336,7 +312,7 @@ public class RateLimitFilter implements ContainerRequestFilter {
             }
           }
           e = new Estado(new RateLimitContador(max, Duration.ofSeconds(janela)), proxies, Map.copyOf(limites),
-              Map.copyOf(limitesConta), janela, cabecalho, limiteIpRenovar);
+              Map.copyOf(limitesConta), janela, cabecalho, limiteIpRenovar, limiteIpBairroCriar);
           estado = e;
         }
       }
