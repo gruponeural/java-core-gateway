@@ -148,18 +148,6 @@ public class RateLimitFilter implements ContainerRequestFilter {
       long janelaSegundos, String cabecalho, int limiteIpRenovar, int limiteIpBairroCriar) {
   }
 
-  /** Só para teste: estado fixo (limite de ranking-listar e proxies), sem ler Config. */
-  void usarEstadoParaTeste(int limiteRankingListar, ProxiesConfiaveis proxies, HttpServerRequest req) {
-    Map<String, Integer> limites = new LinkedHashMap<>();
-    for (Regra r : REGRAS) {
-      limites.put(r.nome(), r.limitePadrao());
-    }
-    limites.put("ranking-listar", limiteRankingListar);
-    estado = new Estado(new RateLimitContador(1000, Duration.ofSeconds(60)), proxies, Map.copyOf(limites), Map.of(), 60,
-        CABECALHO_PADRAO, LIMITE_IP_RENOVAR_PADRAO, LIMITE_IP_BAIRRO_CRIAR_PADRAO);
-    httpServerRequest = req;
-  }
-
   @Override
   public void filter(ContainerRequestContext requestContext) throws IOException {
     String path = normalizar(requestContext.getUriInfo().getPath());
