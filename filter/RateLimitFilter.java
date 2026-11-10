@@ -94,10 +94,15 @@ public class RateLimitFilter implements ContainerRequestFilter {
       new Regra("bairro-criar", Set.of("localizacao/bairro/criar"), 5, TipoChave.IP, null, 0),
       // Favoritos: 120/min por IP aqui; por usuário validado em RateLimitFavoritoUsuarioFilter.
       new Regra("favorito-ip", Set.of("produto/favorito/obter", "produto/favorito/salvar"), 120, TipoChave.IP,
-          null, 0));
+          null, 0),
+      // Consulta de empresa por CNPJ da integração (rota pública, só com assinatura): por IP, para frear
+      // enumeração de CNPJ. 600/min folga o worker de integração (uma consulta por item pendente) e é
+      // ajustável por gateway.rate-limit.empresa-integracao-cnpj.limite.
+      new Regra("empresa-integracao-cnpj", Set.of("empresa/integracao/obter-por-cnpj"), 600, TipoChave.IP, null,
+          0));
 
   /** Rotas limitadas só em GET (as demais valem só para POST). */
-  static final Set<String> ROTAS_GET = Set.of("inicio/obter");
+  static final Set<String> ROTAS_GET = Set.of("inicio/obter", "empresa/integracao/obter-por-cnpj");
 
   /** Limite por IP do renovar, além do limite por idSessao. */
   static final int LIMITE_IP_RENOVAR_PADRAO = 30;
