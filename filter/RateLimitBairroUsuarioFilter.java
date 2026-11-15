@@ -12,6 +12,8 @@ import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.jboss.logging.Logger;
 
+import br.com.gruponeural.core.gateway.route.GatewayRouteRegistry;
+import br.com.gruponeural.core.gateway.route.RegisteredRoute;
 import jakarta.annotation.Priority;
 import jakarta.ws.rs.Priorities;
 import jakarta.ws.rs.container.ContainerRequestContext;
@@ -21,6 +23,8 @@ import jakarta.ws.rs.ext.Provider;
 /**
  * Rate limit por usuário de {@code localizacao/bairro/criar}, depois da autenticação.
  * Usa o upn já validado por {@link GatewayJwtAuthFilter} (propriedade do request), nunca o JWT cru.
+ * A decisão usa a rota já casada ({@link GatewayRouteRegistry#MATCHED_ROUTE_PROPERTY}):
+ * {@code servico()} + {@code path().getOrigem()}, não o path cru.
  */
 @Provider
 @Priority(Priorities.AUTHENTICATION + 20)
@@ -42,8 +46,8 @@ public class RateLimitBairroUsuarioFilter implements ContainerRequestFilter {
     if (!"POST".equalsIgnoreCase(requestContext.getMethod())) {
       return;
     }
-    String path = normalizar(requestContext.getUriInfo().getPath());
-    if (!PATH.equals(path)) {
+    String rota = rotaCanonica(requestContext);
+    if (!PATH.equals(rota)) {
       return;
     }
     Optional<String> chave = chaveUsuarioValidado(
@@ -52,11 +56,25 @@ public class RateLimitBairroUsuarioFilter implements ContainerRequestFilter {
       return;
     }
     Estado e = estado();
-    if (!e.contador().permitir(path + "|" + chave.get(), e.limite())) {
-      LOG.warnf("Rate limit bairro-criar (usuario) excedido em %s", path);
+    if (!e.contador().permitir(PATH + "|" + chave.get(), e.limite())) {
+      LOG.warnf("Rate limit bairro-criar (usuario) excedido em %s", rota);
       String correlationId = org.slf4j.MDC.get("correlationId");
       requestContext.abortWith(RateLimitFilter.resposta429(correlationId, e.janelaSegundos()));
     }
+  }
+
+  /** Serviço + origem da rota já casada pelo registry. {@code null} se não houver rota. */
+  private static String rotaCanonica(ContainerRequestContext requestContext) {
+    Object cru = requestContext.getProperty(GatewayRouteRegistry.MATCHED_ROUTE_PROPERTY);
+    if (!(cru instanceof RegisteredRoute route) || route.path() == null) {
+      return null;
+    }
+    String servico = route.servico();
+    String origem = route.path().getOrigem();
+    if (servico == null || origem == null) {
+      return null;
+    }
+    return servico + "/" + origem;
   }
 
   /**
@@ -90,20 +108,6 @@ public class RateLimitBairroUsuarioFilter implements ContainerRequestFilter {
       }
     }
     return e;
-  }
-
-  private static String normalizar(String path) {
-    if (path == null) {
-      return null;
-    }
-    String p = path;
-    while (p.startsWith("/")) {
-      p = p.substring(1);
-    }
-    while (p.endsWith("/")) {
-      p = p.substring(0, p.length() - 1);
-    }
-    return p;
   }
 
   private static String sha256(String v) {
